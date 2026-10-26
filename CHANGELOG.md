@@ -2,6 +2,9 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026d — n. 4
+- Passaggio dati fra i dispositivi dello stesso referente (pc, tablet, telefono): in Altro → Backup, «Crea il link di trasferimento», lo si manda a sé stessi e lo si apre sull'altro dispositivo (conferma prima di importare, istantanea di sicurezza automatica). Si può anche incollare il link. Nessun server: i dati stanno nel link (parte «#»), compressi (~9 KB per un orario completo).
+
 ### 26.10.2026c — n. 3
 - Tolta la condivisione con il foglio Google (Scarica/Invia, controllo del foglio, script): un solo referente, nessun foglio da associare. I dati restano nel browser; per spostarli o salvarli c'è il backup.
 

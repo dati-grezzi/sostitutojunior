@@ -558,7 +558,7 @@ let S = { orario:null, tab:"oggi", day:"LUN",
           ruolo:"completo" };   /* completo | operativo */   /* assentiOggi: {nome: null|[ore]} */
 
 /* ---------- persistenza ---------- */
-function save(){ try{
+function save(){ S.trasferimento=null; try{
   localStorage.setItem("sostituto_v1", JSON.stringify(S.orario));
   localStorage.setItem("sostituto_lingue", JSON.stringify(S.lingue));
   localStorage.setItem("sostituto_flag", JSON.stringify(S.flagOggi));
@@ -2811,8 +2811,8 @@ function azzeraPno(){
 
 /* ---- BACKUP e RIPRISTINO ---- */
 const BACKUP_VER = 1;
-const VERSIONE = "26.10.2026c";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
-const NUMERO_VERSIONE = 3;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
+const VERSIONE = "26.10.2026d";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
+const NUMERO_VERSIONE = 4;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
 function datiBackup(){
   return {
     app: "SOStituto", versione: BACKUP_VER,
@@ -2902,6 +2902,79 @@ function esportaBackup(){
     copiaTesto(txt);
     toast("Scarico non riuscito — backup copiato negli appunti");
   }
+}
+/* ---- PASSAGGIO DATI FRA I DISPOSITIVI DELLO STESSO REFERENTE (pc, tablet, telefono) ----
+   Nessun server: lo stato (lo stesso del backup) viene compresso e messo in un codice di testo,
+   che si invia a sé stessi (messaggi salvati, mail) come link o come testo e si apre sull'altro
+   dispositivo. Il codice sta nella parte «#» del link, che non viene mai inviata a nessun server.
+   Prefisso: «z» = compresso (gzip), «j» = non compresso (se il browser non sa comprimere). */
+function _b64url(bytes){
+  let b=""; const CH=0x8000;
+  for(let i=0;i<bytes.length;i+=CH) b+=String.fromCharCode.apply(null, bytes.subarray(i,i+CH));
+  return btoa(b).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+function _unb64url(t){
+  t=t.replace(/-/g,"+").replace(/_/g,"/"); while(t.length%4) t+="=";
+  const b=atob(t), out=new Uint8Array(b.length); for(let i=0;i<b.length;i++) out[i]=b.charCodeAt(i); return out;
+}
+async function _flusso(bytes, stream){
+  const w=new Blob([bytes]).stream().pipeThrough(stream);
+  return new Uint8Array(await new Response(w).arrayBuffer());
+}
+async function creaCodiceTrasferimento(){
+  const raw=new TextEncoder().encode(JSON.stringify(datiBackup()));
+  if(typeof CompressionStream==="function"){
+    try{ return "z"+_b64url(await _flusso(raw, new CompressionStream("gzip"))); }catch(e){}
+  }
+  return "j"+_b64url(raw);
+}
+async function leggiCodiceTrasferimento(codice){
+  codice=String(codice||"").trim();
+  const m=codice.match(/#t=([A-Za-z0-9_-]+)/); if(m) codice=m[1];
+  codice=codice.replace(/\s+/g,"");
+  const tipo=codice[0], dati=_unb64url(codice.slice(1));
+  let raw;
+  if(tipo==="z"){
+    if(typeof DecompressionStream!=="function") throw new Error("Questo browser non sa aprire il codice compresso: usa il file di backup");
+    raw=await _flusso(dati, new DecompressionStream("gzip"));
+  } else if(tipo==="j") raw=dati;
+  else throw new Error("Codice non riconosciuto");
+  const d=JSON.parse(new TextDecoder().decode(raw));
+  if(!d || d.app!=="SOStituto") throw new Error("Non è un codice di SOStituto");
+  return d;
+}
+function linkTrasferimento(codice){ return location.origin+location.pathname+"#t="+codice; }
+async function preparaTrasferimento(){
+  try{
+    const c=await creaCodiceTrasferimento();
+    S.trasferimento={codice:c, link:linkTrasferimento(c)};
+  }catch(e){ S.trasferimento=null; toast("Non riesco a creare il codice: usa il file di backup"); }
+  render();
+}
+function condividiTrasferimento(){
+  const t=S.trasferimento; if(!t) return;
+  const testo="SOStituto junior — dati da importare:\n"+t.link;
+  if(navigator.share){ navigator.share({text:testo}).catch(()=>copiaTesto(t.link)); } else copiaTesto(t.link);
+}
+function copiaTrasferimento(){ if(S.trasferimento) copiaTesto(S.trasferimento.link); }
+async function applicaTrasferimento(codice, daLink){
+  let d;
+  try{ d=await leggiCodiceTrasferimento(codice); }
+  catch(e){ toast("Codice non valido: "+(e&&e.message?e.message:"errore")); return false; }
+  const rig=riepilogoBackup(d);
+  const quando=d.creato ? new Date(d.creato).toLocaleString("it-IT") : "data ignota";
+  const msg="Importare i dati ricevuti?\n\nCreati: "+quando+"\n\n"+rig.map(x=>"• "+x).join("\n")
+           +"\n\nATTENZIONE: i dati attualmente in questo dispositivo verranno sostituiti.";
+  if(!confirm(msg)) return false;
+  try{ salvaPreSync(datiBackup()); }catch(_){}
+  applicaStato(d);
+  if(daLink){ try{ history.replaceState(null,"",location.pathname+location.search); }catch(_){} }
+  S.trasferimento=null; S.tab="altro"; toast("Dati importati"); render();
+  return true;
+}
+async function incollaTrasferimento(){
+  const ta=el("codTrasf"); if(!ta||!ta.value.trim()){ toast("Incolla prima il link o il codice"); return; }
+  await applicaTrasferimento(ta.value, false);
 }
 function onFileBackup(ev){
   const f = ev.target.files && ev.target.files[0];
@@ -3719,11 +3792,28 @@ function renderBackup(){
         </div>`;
       }).join("");
       return `<h2 class="sec">Istantanee automatiche</h2>
-        <p class="hint" style="margin-top:0">L'app ne salva una da sola subito prima di ogni Scarica dal foglio condiviso, così hai sempre una via indietro anche se il backup manuale non è aggiornato.</p>
+        <p class="hint" style="margin-top:0">L'app ne salva una da sola subito prima di importare dati da un altro dispositivo, così hai sempre una via indietro anche se il backup manuale non è aggiornato.</p>
         ${righe}`;
     })()}
 
-    <button class="btn ghost" style="width:100%; margin-top:14px" onclick="el('fileBk').click()">⬆️ Ripristina da backup</button>
+    <h2 class="sec" style="margin-top:22px">Passa a un altro dispositivo</h2>
+    <p class="hint" style="margin-top:0">Per usare gli stessi dati su pc, tablet e telefono. Crea un link, mandalo a te stesso (messaggi salvati, mail) e aprilo sull'altro dispositivo: ti chiederà conferma prima di importare. È una fotografia di adesso, non una sincronizzazione continua.</p>
+    ${S.trasferimento ? `
+      <div class="regcard"><div class="reghead" style="cursor:default"><div style="flex:1">
+        <b>Link pronto</b>
+        <div class="regsub">${Math.round(S.trasferimento.link.length/1024*10)/10} KB · contiene i dati della scuola: mandalo solo a te stesso</div>
+      </div></div>
+      <div style="display:flex; gap:8px; margin-top:6px">
+        <button class="btn" style="flex:1" onclick="condividiTrasferimento()">Condividi</button>
+        <button class="btn ghost" style="flex:1" onclick="copiaTrasferimento()">Copia link</button>
+      </div></div>`
+    : `<button class="btn" style="width:100%" onclick="preparaTrasferimento()">Crea il link di trasferimento</button>`}
+    <div class="field" style="margin-top:12px"><label>Hai ricevuto un link o un codice?</label>
+      <textarea id="codTrasf" rows="3" placeholder="Incolla qui il link" style="width:100%"></textarea></div>
+    <button class="btn ghost" style="width:100%" onclick="incollaTrasferimento()">Importa da link o codice</button>
+    <p class="hint">Se invece apri direttamente il link sull'altro dispositivo, l'importazione parte da sola dopo la conferma.</p>
+
+    <button class="btn ghost" style="width:100%; margin-top:22px" onclick="el('fileBk').click()">⬆️ Ripristina da backup</button>
     <input type="file" id="fileBk" accept=".json,application/json" style="display:none">
     <p class="hint" style="color:var(--red)">Il ripristino sostituisce tutti i dati presenti nell'app. Ti verrà chiesta conferma.</p>`;
   el("fileBk").addEventListener("change", onFileBackup);
@@ -4784,6 +4874,8 @@ if(S.orario){ S.day = giornoDaData(S.dataOggi); }
   }catch(e){}
 })();
 render();
+/* link di trasferimento aperto su questo dispositivo: importa dopo conferma */
+if(/^#t=/.test(location.hash)){ setTimeout(()=>applicaTrasferimento(location.hash, true), 600); }
 </script>
 </body>
 </html>
