@@ -2,6 +2,9 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026f — n. 6
+- Intestazione e prospetto stampato: «Scuola primaria» al posto di «Mestica».
+
 ### 26.10.2026e — n. 5
 - **Importazione dal PDF dell'orario della primaria** (una tabella per classe): il lettore ricostruisce righe e colonne dalle coordinate del testo; la libreria pdf.js si scarica solo alla prima importazione. Sostituisce l'import da Excel.
 - Ad ogni importazione si sceglie il gruppo (SM o SMA); le classi senza sigla nel PDF (es. «1A») si includono con una spunta, proposta nel gruppo in cui quella classe manca.

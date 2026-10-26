@@ -496,7 +496,7 @@
 <header>
   <button id="btntema" onclick="cambiaTema()" aria-label="Cambia aspetto: automatico, scuro, chiaro">◐</button>
   <div class="wordmark"><span class="sos">SOS</span>tituto <span style="font-weight:500; opacity:.75">junior</span></div>
-  <div class="tagline">Orario e sostituzioni · <span id="hdrsub">Mestica</span><span class="ver" id="ver"></span></div>
+  <div class="tagline">Orario e sostituzioni · <span id="hdrsub">Scuola primaria</span><span class="ver" id="ver"></span></div>
 </header>
 <div id="syncbar"></div>
 <div id="stalebar"></div>
@@ -1671,7 +1671,7 @@ function render(){
 }
 
 /* ================= STAMPA / PDF ================= */
-const ISTITUTO = "Istituto Comprensivo \"Via Tacito\" · Plesso Mestica — Civitanova Marche";
+const ISTITUTO = "Istituto Comprensivo \"Via Tacito\" · Scuola primaria — Civitanova Marche";
 
 function impostaPagina(orientamento){
   let st = document.getElementById("pagecss");
@@ -3026,8 +3026,8 @@ function azzeraPno(){
 
 /* ---- BACKUP e RIPRISTINO ---- */
 const BACKUP_VER = 1;
-const VERSIONE = "26.10.2026e";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
-const NUMERO_VERSIONE = 5;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
+const VERSIONE = "26.10.2026f";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
+const NUMERO_VERSIONE = 6;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
 function datiBackup(){
   return {
     app: "SOStituto", versione: BACKUP_VER,
