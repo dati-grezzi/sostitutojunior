@@ -554,8 +554,7 @@ let S = { orario:null, tab:"oggi", day:"LUN",
           sync:{url:"",token:"",utente:"",soloLettura:false,ultimoPull:null,info:null}, syncAttivo:false,
           recuperi:[], recuperoForm:null,   /* debiti da permesso breve: {id, docente, ore, data, scadenza, restituite:0, chiuseManuale:0, origine} */
           configCriteri:null,   /* configurazione priorità e abilitamento criteri (legge da default se null) */
-          uscFoglio:{url:"",token:"",ultimo:null}, uscAnteprima:null, uscAttivo:false, uscErr:"",
-          linguaSostegno:{}, incompatibili:[], incompForm:null,
+                    linguaSostegno:{}, incompatibili:[], incompForm:null,
           ruolo:"completo" };   /* completo | operativo */   /* assentiOggi: {nome: null|[ore]} */
 
 /* ---------- persistenza ---------- */
@@ -601,7 +600,6 @@ function load(){ try{
   const rc=localStorage.getItem("sostituto_recuperi"); if(rc) S.recuperi=JSON.parse(rc);
   const cf=localStorage.getItem("sostituto_config");
   if(cf){ const v=JSON.parse(cf); if(Array.isArray(v) && v.length) S.configCriteri=v; }
-  const uf=localStorage.getItem("sostituto_uscfoglio"); if(uf) S.uscFoglio=JSON.parse(uf);
   const rs=localStorage.getItem("sostituto_recscartati"); if(rs) S.recScartati=JSON.parse(rs);
   const as=localStorage.getItem("sostituto_assistenti"); if(as) S.assistenti=JSON.parse(as);
   const lgs=localStorage.getItem("sostituto_linguasost"); if(lgs) S.linguaSostegno=JSON.parse(lgs);
@@ -1444,7 +1442,7 @@ function fmtCl(c){ return c ? c[0]+"ª "+c.slice(1) : c; }
    ============================================================ */
 const el = id => document.getElementById(id);
 
-const SOTTO_ALTRO = ["dove","importa","cambiodoc","uscita","assenze","backup","potenz","sync","flag","recuperi","config","nuovoanno","uscfoglio","coperture","assist","linguasost","incompat"];
+const SOTTO_ALTRO = ["dove","importa","cambiodoc","uscita","assenze","backup","potenz","sync","flag","recuperi","nuovoanno","coperture","assist","incompat"];
 /* in modalità operativa restano solo queste voci del menu Altro */
 const OPERATIVO_TAB = ["dove","sync"];
 /* schede utilizzabili anche prima di avere un orario: sono le vie da cui l'orario arriva */
@@ -1458,7 +1456,7 @@ function render(){
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===attivo));
   if(!S.orario && !SENZA_ORARIO.includes(S.tab)){ renderVuoto(); return; }
   ({oggi:renderOggi, registro:renderRegistro, orario:renderOrario, altro:renderAltro,
-    dove:renderDove, importa:renderImporta, cambiodoc:renderCambioDocente, uscita:renderUscita, assenze:renderAssenze, backup:renderBackup, potenz:renderPotenziamento, sync:renderSync, flag:renderFlag, recuperi:renderRecuperi, config:renderConfigCriteri, nuovoanno:renderNuovoAnno, uscfoglio:renderUscFoglio, coperture:renderCoperture, assist:renderAssist, linguasost:renderLinguaSostegno, incompat:renderIncompatibili})[S.tab]();
+    dove:renderDove, importa:renderImporta, cambiodoc:renderCambioDocente, uscita:renderUscita, assenze:renderAssenze, backup:renderBackup, potenz:renderPotenziamento, sync:renderSync, flag:renderFlag, recuperi:renderRecuperi, nuovoanno:renderNuovoAnno, coperture:renderCoperture, assist:renderAssist, incompat:renderIncompatibili})[S.tab]();
   aggiornaBarraSync();
   aggiornaBarraStale();
 }
@@ -1759,7 +1757,7 @@ function saveSync(){ try{ localStorage.setItem("sostituto_sync", JSON.stringify(
 
 function statoDaCondividere(){
   return { orario:S.orario||null, lingue:S.lingue||{}, flagOggi:S.flagOggi||[], linguaSostegno:S.linguaSostegno||{}, incompatibili:S.incompatibili||[],
-    registro:S.registro||{}, uscite:S.uscite||[], uscFoglioCfg:{url:(S.uscFoglio&&S.uscFoglio.url)||"", token:(S.uscFoglio&&S.uscFoglio.token)||""}, assenzeNote:S.assenzeNote||[],
+    registro:S.registro||{}, uscite:S.uscite||[], assenzeNote:S.assenzeNote||[],
     pnoOn:S.pnoOn||[], potAssign:S.potAssign||{}, potMod:S.potMod||[], recuperi:S.recuperi||[],
     /* da tenere allineati con datiBackup(): tutto ciò che un altro dispositivo
        deve ritrovare, non solo l'orario e il registro */
@@ -1778,8 +1776,6 @@ function applicaStato(d){
   S.incompatibili = d.incompatibili || [];
   S.flagOggi    = d.flagOggi || [];
   S.registro    = d.registro || {};
-  /* il collegamento al foglio viaggi viaggia con lo stato: il dispositivo operativo non deve configurarlo a mano */
-  if(d.uscFoglioCfg && d.uscFoglioCfg.url){ const uc=uscFoglioCfg(); if(!uc.url){ uc.url=d.uscFoglioCfg.url; uc.token=d.uscFoglioCfg.token||""; saveUscFoglio(); } }
   const _uscPrima = S.uscite||[];
   S.uscite      = d.uscite || [];
   S._uscDiff    = tracciaUscite(S._fonteStato||"Stato ricevuto (Scarica, backup o ripristino)", _uscPrima, S.uscite);
@@ -2017,7 +2013,6 @@ function syncScarica(silenzioso){
       S._fonteStato="Scarica da Condivisione"+(j.info&&j.info.utente?" (inviato da "+j.info.utente+")":"");
       applicaStato(j.dati); S._fonteStato=null;
       S.avvisoUscite = (S._uscDiff&&S._uscDiff.length) ? {righe:S._uscDiff, quando:new Date().toISOString(), fonte:"scarica"} : null;
-      setTimeout(()=>uscLeggiAuto(0,false), 400);   /* le uscite tornano quelle del foglio, anche se il dispositivo che ha inviato era indietro */
       c.info = j.info || null;
       c.ultimoPull = (j.info && j.info.quando) || new Date().toISOString();
       if(j.info && j.info.quando) S.syncRemoto = {utente:j.info.utente||"", quando:j.info.quando, controllato:new Date().toISOString()};
@@ -2235,8 +2230,6 @@ function renderAltro(){
     { tab:"cambiodoc", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.4-3.2 2.6-5 5.5-5s5.1 1.8 5.5 5"/><path d="M16 5.5h5m0 0-1.8-1.8M21 5.5l-1.8 1.8"/><path d="M21 12h-5m0 0 1.8-1.8M16 12l1.8 1.8" transform="translate(0 2)"/></svg>`, tit:"Cambio e aggiunta docente", sub:"Subentra un supplente, correggi un nome, aggiungi un docente del pomeriggio" },
     { tab:"sync",    ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5A6.5 6.5 0 0 1 15.5 5.6L18 8"/><path d="M18 4v4h-4"/><path d="M20 14.5A6.5 6.5 0 0 1 8.5 18.4L6 16"/><path d="M6 20v-4h4"/></svg>`, tit:"Condivisione",       sub:(S.sync&&S.sync.url)?((S.sync.soloLettura?"sola lettura":"attiva")+((S.sync.info&&S.sync.info.utente)?" · ultimo: "+S.sync.info.utente:"")):"Collega il foglio Google della scuola" },
     { tab:"backup",  ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="9.5" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/><circle cx="12" cy="15" r="1.1"/></svg>`, tit:"Backup e ripristino", sub:"Salva tutto in un file — o rimetti a posto dopo un guaio" },
-    { tab:"config", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m5.08 5.08l4.24 4.24M1 12h6m6 0h6M4.22 19.78l4.24-4.24m5.08-5.08l4.24-4.24"/></svg>`, tit:"Configurazione criteri", sub:"Attiva/disattiva criteri e ordina la priorità" },
-    { tab:"linguasost", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18M12 3a13 13 0 0 0 0 18"/></svg>`, tit:"Gruppi di seconda lingua", sub:"Francese o spagnolo per le ore ambigue del sostegno" },
     { tab:"incompat", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`, tit:"Incompatibilità", sub:"Docenti che non possono mai fare supplenza in una data classe" },
     { tab:"coperture", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/></svg>`, tit:"Coperture", sub:"Dove c'è una seconda presenza in aula, e dove no" },
     { tab:"nuovoanno", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>`, tit:"Nuovo anno scolastico", sub:"Azzera i dati dell'anno concluso e ricomincia" },
@@ -2390,7 +2383,6 @@ function renderOggi(){
       </select></div>`;
 
   // avviso: uscita didattica in corso in questa data
-  out += uscStatoHtml();
   const uscOggi = usciteAttive(S.dataOggi);
   if(uscOggi.length){
     out += uscOggi.map(u=>{
@@ -2564,12 +2556,9 @@ function prospettoBannerHTML(){
 function aggiornaBarraStale(){
   const b=el("stalebar"); if(!b) return;
   let h="";
-  if(S.uscAnteprima && S.tab!=="uscfoglio")
-    h+=`<div class="syncbar stale" onclick="S.tab='uscfoglio'; render(); window.scrollTo(0,0)">
-      <span>📥 Hai letto le uscite dal foglio ma <b>non le hai confermate</b>: finché non premi Conferma restano le vecchie</span><b class="go">Apri ›</b></div>`;
-  if(S.avvisoUscite && S.tab!=="uscita" && (S.avvisoUscite.fonte!=="foglio" || S.avvisoUscite.urgente))
+  if(S.avvisoUscite && S.tab!=="uscita")
     h+=`<div class="syncbar stale" onclick="S.tab='uscita'; render(); window.scrollTo(0,0)">
-      <span>${S.avvisoUscite.fonte==="foglio" ? "🔄 Il foglio viaggi ha <b>cambiato le uscite</b>" : "⚠ Lo Scarica ha <b>cambiato le uscite</b>"}: ${S.avvisoUscite.righe.slice(0,2).join(" · ")}${S.avvisoUscite.righe.length>2?" · …":""}</span><b class="go">Apri ›</b>
+      <span>⚠ Lo Scarica ha <b>cambiato le uscite</b>: ${S.avvisoUscite.righe.slice(0,2).join(" · ")}${S.avvisoUscite.righe.length>2?" · …":""}</span><b class="go">Apri ›</b>
       <span class="x" onclick="event.stopPropagation(); S.avvisoUscite=null; aggiornaBarraStale()" aria-label="Nascondi">×</span></div>`;
   if(S.tab!=="oggi" && prospettoCambiato())
     h+=`<div class="syncbar stale" onclick="S.tab='oggi'; render(); window.scrollTo(0,0)">
@@ -3099,8 +3088,8 @@ function azzeraPno(){
 
 /* ---- BACKUP e RIPRISTINO ---- */
 const BACKUP_VER = 1;
-const VERSIONE = "26.10.2026a";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
-const NUMERO_VERSIONE = 1;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
+const VERSIONE = "26.10.2026b";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
+const NUMERO_VERSIONE = 2;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
 function datiBackup(){
   return {
     app: "SOStituto", versione: BACKUP_VER,
@@ -3110,7 +3099,6 @@ function datiBackup(){
     flagOggi: S.flagOggi || [],
     registro: S.registro || {},
     uscite: S.uscite || [],
-    uscFoglioCfg: { url:(S.uscFoglio&&S.uscFoglio.url)||"", token:(S.uscFoglio&&S.uscFoglio.token)||"" },
     assenzeNote: S.assenzeNote || [],
     pnoOn: S.pnoOn || [],
     potMod: S.potMod || [],
@@ -3374,79 +3362,6 @@ function getConfigCriteri(){
   });
   return S.configCriteri;
 }
-function renderConfigCriteri(){
-  const config = getConfigCriteri();
-  const sorted = [...config].sort((a,b)=>{
-    if(!a.enabled && !b.enabled) return a.code.localeCompare(b.code);
-    if(!a.enabled) return 1; if(!b.enabled) return -1;
-    return a.priority - b.priority;
-  });
-  const rows = sorted.map(c=>`
-    <div class="criterion-row ${!c.enabled?'disabled':''}">
-      <input type="checkbox" class="criterion-checkbox" ${c.enabled?'checked':''}
-        onchange="toggleCriterion('${c.code}'); render()">
-      <div class="criterion-label">
-        <div class="criterion-code">${c.code.toUpperCase()}) ${c.label}</div>
-        <div class="criterion-desc">${c.desc}</div>
-      </div>
-      <div class="criterion-priority">
-        <input type="number" class="priority-input" min="1" max="8" 
-          value="${c.priority}" ${!c.enabled?'disabled':''}
-          onchange="updateCriterionPriority('${c.code}', this.value); render()">
-      </div>
-    </div>
-  `).join("");
-  el("main").innerHTML = `
-    <div class="backlink" onclick="S.tab='altro'; render()">‹ Altro</div>
-    <h2 class="sec">Configurazione criteri</h2>
-    <p class="hint" style="margin-top:0">Attiva/disattiva i criteri della circolare e ordina la priorità. Le modifiche influenzeranno le prossime generazioni di sostituzioni. Quelle già registrate rimangono invariate.</p>
-    <div class="criteria-list">${rows}</div>
-    <p class="hint">Il criterio <b>d)</b> compare per completezza ma non ha ancora un automatismo: la flessibilità da attività esterne si autorizza a domanda e non è calcolabile dall'orario. Attivarlo o no non cambia nulla, finché non lo costruiamo.</p>
-    <div style="display:flex; gap:8px; margin-top:16px">
-      <button class="btn ghost" style="flex:1" onclick="resetCriteria()">Ripristina default</button>
-      <button class="btn" style="flex:1" onclick="saveCriteria()">Salva configurazione</button>
-    </div>
-    <div class="feedback" id="feedback"></div>
-  `;
-}
-function toggleCriterion(code){
-  const config = getConfigCriteri();
-  const crit = config.find(c=>c.code===code);
-  if(crit) crit.enabled = !crit.enabled;
-  S.prospetto = null;
-}
-function updateCriterionPriority(code, value){
-  const config = getConfigCriteri();
-  const crit = config.find(c=>c.code===code);
-  if(!crit || !value) return;
-  const n = config.length;
-  const dest = Math.max(1, Math.min(n, parseInt(value)||1));
-  /* tolgo il criterio dalla fila e lo reinserisco alla posizione chiesta,
-     poi rinumero tutti da 1 a n: così non restano mai due numeri uguali */
-  const fila = [...config].sort((a,b)=>a.priority-b.priority || a.code.localeCompare(b.code));
-  const i = fila.indexOf(crit);
-  fila.splice(i,1);
-  fila.splice(dest-1,0,crit);
-  fila.forEach((c,k)=> c.priority = k+1);
-  S.prospetto = null;
-}
-function saveCriteria(){
-  save();
-  const fb = el("feedback");
-  if(fb){
-    fb.textContent = "✓ Configurazione salvata";
-    fb.className = "feedback show success";
-    setTimeout(()=>fb.classList.remove("show"), 3000);
-  }
-}
-function resetCriteria(){
-  if(!confirm("Ripristinare i criteri all'ordine della circolare?")) return;
-  S.configCriteri = CRITERIA_DEFAULT.map(c=>({...c, enabled:true}));
-  S.prospetto = null;
-  save();
-  render();
-}
-
 /* ================= VISTA COPERTURE =================
    Mappa strutturale della seconda presenza in aula, classe per classe e ora per ora.
    Non guarda le assenze del giorno: dice dove l'orario lascia margine e dove no.
@@ -3818,58 +3733,6 @@ function normLingua(s){
 
 /* legge il file DOCENTE|GIORNO|ORA|CLASSE|LINGUA. Non salva nulla da solo:
    restituisce righe valide + problemi, per mostrare un'anteprima prima di confermare. */
-function leggiLinguaSostegno(wb){
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  if(!ws) return {errore:"Il file non contiene fogli leggibili."};
-  const grid = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null});
-  const up=x=>String(x==null?"":x).trim().toUpperCase();
-  let hdr=-1, col={};
-  for(let r=0;r<Math.min(grid.length,15);r++){
-    const row=(grid[r]||[]).map(up);
-    if(row.includes("DOCENTE") && row.includes("LINGUA")){
-      hdr=r;
-      ["DOCENTE","GIORNO","ORA","CLASSE","LINGUA"].forEach(k=>{ const i=row.indexOf(k); if(i>=0) col[k]=i; });
-      break;
-    }
-  }
-  if(hdr<0) return {errore:"Non trovo l'intestazione (servono le colonne DOCENTE, GIORNO, ORA, CLASSE, LINGUA)."};
-  if(!("DOCENTE" in col) || !("GIORNO" in col) || !("ORA" in col) || !("CLASSE" in col) || !("LINGUA" in col))
-    return {errore:"Mancano una o più colonne fra DOCENTE, GIORNO, ORA, CLASSE, LINGUA."};
-
-  const valide=[], problemi=[]; const visteInFile={};
-  for(let r=hdr+1;r<grid.length;r++){
-    const row=grid[r]||[];
-    const docRaw=String(row[col.DOCENTE]==null?"":row[col.DOCENTE]).trim();
-    if(!docRaw) continue;                                    /* riga vuota: la salto */
-    if(/^LEGENDA$/i.test(docRaw) || /^DA VERIFICARE/i.test(docRaw)) break;   /* fine dati */
-
-    const giorno=normGiorno(row[col.GIORNO]);
-    const oraM=String(row[col.ORA]==null?"":row[col.ORA]).match(/\d+/);
-    const ora=oraM?+oraM[0]:null;
-    const classe=String(row[col.CLASSE]==null?"":row[col.CLASSE]).trim().toUpperCase();
-    const lingua=normLingua(row[col.LINGUA]);
-    const rigaTx="riga "+(r+1)+" ("+docRaw+")";
-
-    if(!giorno){ problemi.push(rigaTx+": giorno non riconosciuto"); continue; }
-    if(!ora){ problemi.push(rigaTx+": ora non valida"); continue; }
-    if(!/^[1-9][A-D]$/.test(classe)){ problemi.push(rigaTx+": classe non valida"); continue; }
-    if(!lingua){ problemi.push(rigaTx+": lingua non riconosciuta (usare F o S)"); continue; }
-
-    const nome = agganciaDocente(docRaw);
-    if(!nome){ problemi.push(rigaTx+": docente non trovato nell'orario"); continue; }
-    const doc = S.orario.docenti.find(x=>x.nome===nome);
-    if(!isSost(doc)){ problemi.push(rigaTx+": "+nome+" risulta un docente, ma non di sostegno"); continue; }
-
-    const key=nome+"|"+giorno+"|"+ora;
-    if(visteInFile[key] && visteInFile[key]!==lingua){
-      problemi.push(rigaTx+": due righe diverse per la stessa ora ("+visteInFile[key]+" e "+lingua+")"); continue;
-    }
-    visteInFile[key]=lingua;
-    valide.push({nome, g:giorno, h:ora, classe, lingua});
-  }
-  return {valide, problemi};
-}
-
 function getLinguaSostegno(){ S.linguaSostegno = S.linguaSostegno || {}; return S.linguaSostegno; }
 
 function renderIncompatibili(){
@@ -3937,123 +3800,6 @@ function rimuoviIncompatibile(nome, classe){
   S.incompatibili = (S.incompatibili||[]).filter(s=>s!==nome+"|"+classe);
   S.prospetto=null; save(); render();
 }
-
-function renderLinguaSostegno(){
-  if(!S.orario){
-    el("main").innerHTML=`<div class="backlink" onclick="S.tab='altro'; render()">‹ Altro</div>
-      <h2 class="sec">Gruppi di seconda lingua</h2>
-      <p class="hint">Serve prima l'orario. Importalo da Altro → Importa orario.</p>`;
-    return;
-  }
-  const lg=getLinguaSostegno();
-  const senzaFR = !S.lingue || !S.lingue.FR, senzaSP = !S.lingue || !S.lingue.SP;
-
-  const daFare = sostegniSenzaLingua(S.orario, S.lingue)
-    .filter(x=> !lg[x.nome+"|"+x.g+"|"+x.h]);
-  const assegnati = Object.keys(lg).map(k=>{
-    const [nome,g,h]=k.split("|");
-    const st=statoCella(S.orario.docenti.find(d=>d.nome===nome)||{cells:{}}, g, +h, S.orario.ore);
-    return {nome, g, h:+h, classe: st.det || "?", lingua: lg[k]};
-  }).sort((a,b)=> a.nome.localeCompare(b.nome) || a.g.localeCompare(b.g) || a.h-b.h);
-
-  el("main").innerHTML = `
-    <div class="backlink" onclick="S.tab='altro'; render()">‹ Altro</div>
-    <h2 class="sec">Gruppi di seconda lingua</h2>
-    <p class="hint" style="margin-top:0">Quando un sostegno copre un'ora di articolata e la sua cella nell'orario non dice se è nel gruppo francese o spagnolo, lo indichi qui: il motore delle sostituzioni ne tiene conto.</p>
-
-    ${(senzaFR||senzaSP) ? `<div class="promemo" style="background:var(--tint-warm2); border-left-color:var(--amber)">
-      Prima serve sapere chi sono i docenti di riferimento di ${senzaFR&&senzaSP?"francese e spagnolo":senzaFR?"francese":"spagnolo"}.
-      Si impostano in <span style="color:var(--teal); font-weight:600" onclick="S.tab='flag'; render()">Altro → Sostegni non derogabili</span>, in fondo alla pagina.</div>` : ``}
-
-    <input type="file" id="fileLinguaSost" accept=".xlsx,.xls" style="display:none" onchange="caricaLinguaSostegno(this)">
-    <button class="btn" style="width:100%" onclick="el('fileLinguaSost').click()">📄 Importa da file</button>
-    <div id="linguaSostEsito"></div>
-
-    <h2 class="sec">Da assegnare${daFare.length?" ("+daFare.length+")":""}</h2>
-    ${!daFare.length ? `<p class="hint" style="margin-top:0">${(senzaFR||senzaSP)?"—":"Nessuna ora ambigua al momento."}</p>` :
-      `<p class="hint" style="margin-top:0">Ore di articolata dove un sostegno è su una delle classi coinvolte, ma non si sa in quale gruppo.</p>
-      <div class="criteria-list">${daFare.map(x=>`
-        <div class="criterion-row">
-          <div class="criterion-label">
-            <div class="criterion-code">${esc(cognomeBreve(x.nome))}</div>
-            <div class="criterion-desc">${esc(x.g)} · ${x.h}ª · ${esc(fmtCl(x.classe))}</div>
-          </div>
-          <div style="display:flex; gap:6px">
-            <button class="btn ghost" style="padding:7px 12px; font-size:13px" onclick="assegnaLinguaSostegno('${esc(x.nome)}','${x.g}',${x.h},'FR')">🇫🇷 F</button>
-            <button class="btn ghost" style="padding:7px 12px; font-size:13px" onclick="assegnaLinguaSostegno('${esc(x.nome)}','${x.g}',${x.h},'SP')">🇪🇸 S</button>
-          </div>
-        </div>`).join("")}</div>`}
-
-    <h2 class="sec">Assegnati${assegnati.length?" ("+assegnati.length+")":""}</h2>
-    ${!assegnati.length ? `<p class="hint" style="margin-top:0">Nessuno ancora.</p>` :
-      `<div class="criteria-list">${assegnati.map(x=>`
-        <div class="criterion-row">
-          <div class="criterion-label">
-            <div class="criterion-code">${esc(cognomeBreve(x.nome))} <span style="color:${x.lingua==='FR'?'var(--teal)':'var(--amber)'}">${x.lingua==='FR'?'francese':'spagnolo'}</span></div>
-            <div class="criterion-desc">${esc(x.g)} · ${x.h}ª · ${esc(fmtCl(x.classe))}</div>
-          </div>
-          <button class="btn ghost" style="padding:7px 12px; font-size:13px; color:var(--red); border-color:var(--red)"
-            onclick="rimuoviLinguaSostegno('${esc(x.nome)}','${x.g}',${x.h})">✕</button>
-        </div>`).join("")}</div>`}
-  `;
-}
-
-function assegnaLinguaSostegno(nome,g,h,lingua){
-  const lg=getLinguaSostegno();
-  lg[nome+"|"+g+"|"+h]=lingua;
-  S.prospetto=null; save(); render();
-}
-function rimuoviLinguaSostegno(nome,g,h){
-  const lg=getLinguaSostegno();
-  delete lg[nome+"|"+g+"|"+h];
-  S.prospetto=null; save(); render();
-}
-
-function caricaLinguaSostegno(inp){
-  const f=inp.files&&inp.files[0]; if(!f) return;
-  const rd=new FileReader();
-  rd.onload=e=>{
-    let res;
-    try{
-      const wb=XLSX.read(new Uint8Array(e.target.result), {type:"array"});
-      res=leggiLinguaSostegno(wb);
-    }catch(err){ res={errore:"Non riesco a leggere il file: "+String(err)}; }
-    const box=el("linguaSostEsito");
-    if(res.errore){
-      box.innerHTML=`<div class="promemo" style="background:var(--tint-red); border-left-color:var(--red)">${esc(res.errore)}</div>`;
-      inp.value=""; return;
-    }
-    let html=`<div class="promemo">${res.valide.length} righe valide su ${res.valide.length+res.problemi.length} lette.</div>`;
-    if(res.problemi.length){
-      html+=`<div class="promemo" style="background:var(--tint-warm2); border-left-color:var(--amber)">
-        <b>Da controllare (non importate):</b><br>${res.problemi.slice(0,10).map(esc).join("<br>")}
-        ${res.problemi.length>10?"<br>…e altre "+(res.problemi.length-10):""}</div>`;
-    }
-    if(res.valide.length){
-      html+=`<button class="btn" style="width:100%; margin-top:8px" onclick='confermaLinguaSostegno(${JSON.stringify(JSON.stringify(res.valide))})'>Importa le ${res.valide.length} righe valide</button>`;
-    }
-    box.innerHTML=html;
-    inp.value="";
-  };
-  rd.readAsArrayBuffer(f);
-}
-function confermaLinguaSostegno(jsonTxt){
-  const valide=JSON.parse(jsonTxt);
-  const lg=getLinguaSostegno();
-  valide.forEach(x=>{ lg[x.nome+"|"+x.g+"|"+x.h]=x.lingua; });
-  S.prospetto=null; save();
-  toast(valide.length+" assegnazioni importate");
-  render();
-}
-
-/* ================= IMPORT USCITE DAL FOGLIO VIAGGI =================
-   Il foglio è compilato dalla FS viaggi e letto tramite uno script Google.
-   L'app non scrive mai sul foglio: lo legge e basta.
-   Le uscite importate portano origine:"foglio" e un riferimento di riga (rif),
-   così a ogni import si sostituiscono fra loro senza toccare quelle scritte a mano. */
-
-function uscFoglioCfg(){ S.uscFoglio = S.uscFoglio || {url:"",token:"",ultimo:null}; return S.uscFoglio; }
-function saveUscFoglio(){ try{ localStorage.setItem("sostituto_uscfoglio", JSON.stringify(S.uscFoglio)); }catch(e){} }
 
 /* confronta un nome del foglio con quelli dell'orario: esatto, poi per cognome */
 /* docenti senza orario del mattino (es. indirizzo musicale: servizio al pomeriggio). Stanno dentro S.orario, quindi
@@ -4124,397 +3870,6 @@ function modificaUscita(id){
   S.uscitaForm=JSON.parse(JSON.stringify(u));
   S.uscitaForm.ore=S.uscitaForm.ore||[]; S.uscitaForm.classi=S.uscitaForm.classi||[]; S.uscitaForm.accomp=S.uscitaForm.accomp||[];
   render(); window.scrollTo(0,0);
-}
-
-/* ============================================================
-   LETTURA AUTOMATICA del foglio viaggi + previsioni per la FS
-   ============================================================ */
-let _uscAutoAt=0;
-function uscModuloUrl(){ const c=uscFoglioCfg(); return c.url ? c.url.replace(/[?#].*$/,"")+"?modulo=1" : ""; }
-function uscPubblica(){ const c=uscFoglioCfg(); if(c.pubblica!==undefined) return !!c.pubblica;
-  return S.ruolo!=="operativo" && !(S.sync&&S.sync.soloLettura); }
-function rinfrescaUscSeLibero(){
-  if(!["oggi","uscita","uscfoglio"].includes(S.tab)) return;
-  const a=document.activeElement; if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
-  if(S.tab==="uscita" && S.uscitaForm) return;
-  render();
-}
-function uscLeggiAuto(minSecondi, manuale){
-  const c=uscFoglioCfg();
-  if(!c.url || S.uscAutoAttivo || !S.orario) return Promise.resolve();
-  if(!manuale && c.auto===false) return Promise.resolve();
-  const t=Date.now(); if(!manuale && t-_uscAutoAt < (minSecondi==null?55:minSecondi)*1000) return Promise.resolve();
-  _uscAutoAt=t; S.uscAutoAttivo=true;
-  let ridisegna=!!manuale; const era=c.autoStato&&c.autoStato.ok;
-  if(manuale) rinfrescaUscSeLibero();
-  return fetch(c.url+"?token="+encodeURIComponent(c.token||""))
-    .then(r=>r.json())
-    .then(j=>{
-      if(!j.ok) throw new Error("Il foglio ha risposto: "+(j.errore||"errore sconosciuto"));
-      const es=applicaUsciteFoglio(j);
-      if(es.cambiate||es.bloccata||era===false) ridisegna=true;
-      c.autoStato={ok:true, ultimaOk:new Date().toISOString(), n:es.n, bloccata:es.bloccata||"", cambia:es.cambiate?es.cambia:((c.autoStato&&c.autoStato.cambia)||[]), cambiaQuando:es.cambiate?new Date().toISOString():(c.autoStato&&c.autoStato.cambiaQuando)||null};
-      try{ uscPushAnagrafica(); uscPushPrevisioni(j); }catch(_){}
-    })
-    .catch(err=>{
-      const a=c.autoStato||{};
-      if(a.ok!==false) ridisegna=true;
-      c.autoStato={ok:false, ultimaOk:a.ultimaOk||null, erroreDal:(a.ok===false&&a.erroreDal)?a.erroreDal:new Date().toISOString(), errore:descriviErrore(err), cambia:a.cambia||[], cambiaQuando:a.cambiaQuando||null};
-    })
-    .then(()=>{ S.uscAutoAttivo=false; saveUscFoglio(); aggiornaBarraStale(); if(ridisegna) rinfrescaUscSeLibero(); });
-}
-/* applica quello che dice il foglio. Non cancella il prospetto già generato: se cambia qualcosa che lo riguarda,
-   il controllo "prospetto non aggiornato" lo segnala. */
-function applicaUsciteFoglio(j){
-  const righe=j.uscite||[];
-  const vecchia=S.uscAnteprima; preparaAnteprima(righe, j.info||null, j.scartate||[]);
-  const a=S.uscAnteprima; S.uscAnteprima=vecchia;
-  const nTot=a.voci.length+(a.tenute||[]).length;
-  const precedenti=(S.uscite||[]).filter(u=>u.origine==="foglio");
-  if(!a.voci.length && !(a.tenute&&a.tenute.length) && precedenti.length && (j.info && j.info.righe===0))
-    return {cambiate:false, n:0, bloccata:"Il foglio risulta vuoto: tengo le uscite che ho."};
-  const prima=JSON.parse(JSON.stringify(S.uscite||[]));
-  const manuali=(S.uscite||[]).filter(u=>u.origine!=="foglio");
-  const nuove=manuali.concat(a.voci);
-  const diff=diffUscite(prima, nuove);
-  /* cosa dice il foglio di diverso da ciò che ho corretto a mano */
-  const sigT=JSON.stringify((a.tenute||[]).map(t=>[t.mia.id,t.diff]));
-  const cc=uscFoglioCfg(); const nuovaDiffTenute = sigT!==(cc.tenuteSig||"[]") && (a.tenute||[]).some(t=>t.diff.length);
-  cc.tenuteSig=sigT;
-  if(!diff.length && !nuovaDiffTenute) return {cambiate:false, n:nTot, cambia:[]};
-  let righeAvviso=diff.slice();
-  if(nuovaDiffTenute) (a.tenute||[]).filter(t=>t.diff.length).forEach(t=>righeAvviso.push(`il foglio dice diversamente da ciò che hai corretto a mano in «${esc(t.mia.nota||"Uscita")}»`));
-  if(diff.length){ S.uscite=nuove; tracciaUscite("Lettura automatica del foglio viaggi", prima, nuove); save(); }
-  const oggi=isoOggi(), domani=isoPiuGiorni(oggi,1);
-  const tutte=prima.concat(nuove);
-  const urgente=(diff.ids||[]).some(id=>tutte.some(u=>u.id===id && u.dal<=domani && (u.al||u.dal)>=oggi)) || nuovaDiffTenute;
-  S.avvisoUscite={righe:righeAvviso, quando:new Date().toISOString(), fonte:"foglio", urgente};
-  return {cambiate:true, n:nTot, cambia:righeAvviso};
-}
-function uscAutoToggle(on){ const c=uscFoglioCfg(); c.auto=!!on; saveUscFoglio(); if(on) uscLeggiAuto(0,true); else render(); }
-function uscPubblicaToggle(on){ const c=uscFoglioCfg(); c.pubblica=!!on; c.prevSig=""; c.anagSig=""; saveUscFoglio(); render(); }
-function copiaModuloUrl(){ const u=uscModuloUrl(); if(u) copiaTesto(u); }
-
-/* l'elenco dei docenti dell'orario viene mandato allo script, che lo scrive nella scheda "Docenti" */
-function uscPushAnagrafica(){
-  const c=uscFoglioCfg(); if(!c.url || !S.orario || !uscPubblica()) return;
-  const nomi=nomiDocenti().sort(); const sig=nomi.join("|");
-  if(sig===c.anagSig || (c.anagTent && Date.now()-c.anagTent<5*60*1000 && c.anagErr)) return;
-  c.anagTent=Date.now();
-  fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({token:c.token||"",azione:"anagrafica",docenti:nomi})})
-    .then(r=>r.json()).then(r=>{
-      if(r&&r.ok){ c.anagSig=sig; c.anagErr=""; c.anagQuando=new Date().toISOString(); c.anagN=nomi.length; c.anagNuovi=r.nuovi||0; c.anagTolti=r.tolti||0; }
-      else c.anagErr=(r&&r.errore)||"risposta non valida";
-      saveUscFoglio();
-    }).catch(e=>{ c.anagErr="lo script del foglio non è aggiornato alla versione 2 ("+descriviErrore(e)+")"; saveUscFoglio(); });
-}
-
-/* ---- previsione delle sostituzioni di un giorno, senza toccare lo stato di oggi ---- */
-function previsioneGiorno(iso, uscExtra, rec, opz){
-  const o=S.orario; if(!o) return null;
-  const g=giornoDaData(iso);
-  if(!o.giorni.includes(g)) return {data:iso, senzaLezione:true, sost:0, scoperte:0};
-  const salva={dataOggi:S.dataOggi, day:S.day, ass:S.assentiOggi, breve:S.breveOggi, ovr:S.override, al:S.alunnoAssenteOggi, pr:S.prospetto, ing:S.ingressiProsp, na:S.noteApplicate, dn:S.daNote};
-  try{
-    S.dataOggi=iso; S.day=g; S.assentiOggi={}; S.breveOggi={}; S.override={}; S.alunnoAssenteOggi=[]; S.noteApplicate=null;
-    applicaAssenzeNote();                                 /* le assenze già comunicate per quel giorno */
-    const assenti=Object.keys(S.assentiOggi).map(n=>({nome:n, ore:S.assentiOggi[n]}));
-    const us=usciteAttive(iso).concat((uscExtra||[]).filter(u=>iso>=u.dal && iso<=(u.al||u.dal)));
-    const p=generaProspetto(o, g, assenti, { flag:S.flagOggi, override:{}, alunnoAssente:[], uscite:us, recuperi:rec });
-    const scop=p.esiti.filter(e=>!e.scelto && e.motivo==="scoperta");
-    const per={}; (p.note||[]).forEach(n=>{ (per[n.nome]=per[n.nome]||{h:[],cl:new Set()}); per[n.nome].h.push(n.h); per[n.nome].cl.add(n.classe); });
-    const testo=testoWhatsAppData(p, iso).split("\n").slice(2).join("\n").trim();   /* tolgo il titolo: la data è già nel riquadro */
-    let riserva=null;
-    if(opz && opz.nome){        /* cosa succede alle ore di UNA riserva se subentra */
-      const gia=!!S.assentiOggi[opz.nome];
-      const mie=gia?[]:p.esiti.filter(e=>e.a.nome===opz.nome && (e.scelto||e.motivo==="scoperta")).sort((x,y)=>x.h-y.h);
-      const ore=mie.map(e=>e.h+"ª "+e.classe+" → "+(e.motivo==="scoperta"?"⚠ SCOPERTA":cognomeBreve(e.scelto,14)));
-      if(!gia){
-        (p.coperte||[]).filter(c=>c.a&&c.a.nome===opz.nome).sort((x,y)=>x.h-y.h).forEach(c=>ore.push(c.h+"ª "+c.classe+" → "+cognomeBreve(c.da,14)+" (potenz.)"));
-        (p.note||[]).filter(n=>n.nome===opz.nome).sort((x,y)=>x.h-y.h).forEach(n=>ore.push(n.h+"ª "+n.classe+" → sostegno, non sostituito"));
-      }
-      riserva={ assente:gia, ore, scoperte:mie.filter(e=>e.motivo==="scoperta").length, sost:mie.filter(e=>e.scelto).length };
-    }
-    return { _riserva:riserva, data:iso, sost:p.esiti.filter(e=>e.scelto).length, scoperte:scop.length,
-             scopTx:scop.map(e=>e.h+"ª "+e.classe+" ("+cognomeBreve(e.a.nome,14)+")"),
-             nonSost:Object.keys(per).map(n=>cognomeBreve(n,14)+" "+per[n].h.sort((a,b)=>a-b).map(h=>h+"ª").join(", ")+" ("+[...per[n].cl].join(", ")+")"),
-             assentiNoti:assenti.length, testo:testo.slice(0,2500) };
-  }catch(err){ return {data:iso, errore:String(err&&err.message||err), sost:0, scoperte:0}; }
-  finally{ S.dataOggi=salva.dataOggi; S.day=salva.day; S.assentiOggi=salva.ass; S.breveOggi=salva.breve; S.override=salva.ovr; S.alunnoAssenteOggi=salva.al; S.prospetto=salva.pr; S.ingressiProsp=salva.ing; S.noteApplicate=salva.na; S.daNote=salva.dn; }
-}
-function costruisciPrevisioni(j){
-  const oggi=isoOggi(), limite=isoPiuGiorni(oggi,60), out={}, cache={};
-  let rec={}; try{ rec=recuperiPerMotore(); }catch(_){}
-  const giorni=(dal,al)=>{ const arr=[]; let d=dal<oggi?oggi:dal; for(let k=0;k<5 && d<=al;k++){ arr.push(d); d=isoPiuGiorni(d,1); } return arr; };
-  const quando=new Date().toISOString();
-  const una=(v, ipotesi)=>{
-    if(!v.idFoglio || (v.al||v.dal)<oggi || v.dal>limite) return;
-    const gg=giorni(v.dal, v.al||v.dal);
-    if(!gg.length) return;
-    const dati=gg.map(d=>{
-      const base = ipotesi ? previsioneGiorno(d,[v],rec) : (cache[d]||(cache[d]=previsioneGiorno(d,[],rec)));
-      if(!base) return base;
-      const r=Object.assign({},base); delete r._riserva;
-      /* e se subentra una riserva? ogni riserva è calcolata come se fosse un accompagnatore in più */
-      if((v.riserve||[]).length){
-        r.riserve=v.riserve.map((nome,k)=>{
-          const nomeFoglio=(v.riserveRaw||[])[k]||nome;
-          if(base.senzaLezione) return {nome:nomeFoglio, ore:[], scoperte:0, sost:0};
-          const fin={id:"ris:"+nome, nota:v.nota, dal:v.dal, al:v.al||v.dal, ore:v.ore||[], classi:v.classi||[], accomp:[nome]};
-          const x=previsioneGiorno(d, ipotesi?[v,fin]:[fin], rec, {nome});
-          const q=x&&x._riserva; if(!q) return {nome:nomeFoglio, ore:[], scoperte:0, sost:0, errore:true};
-          return {nome:nomeFoglio, ore:q.ore, scoperte:q.scoperte, sost:q.sost, assente:q.assente};
-        });
-      }
-      return r;
-    });
-    out[v.idFoglio]={firma:v.firma||"", calcolatoIl:quando, ipotesi:!!ipotesi, giorni:dati.filter(Boolean), piuGiorni:gg[gg.length-1]<(v.al||v.dal)};
-  };
-  const vecchia=S.uscAnteprima;
-  preparaAnteprima(j.uscite||[], null, [], true); const conf=S.uscAnteprima.voci.concat((S.uscAnteprima.tenute||[]).map(t=>t.foglio));
-  preparaAnteprima(j.forse||[], null, [], true); const forse=S.uscAnteprima.voci.concat((S.uscAnteprima.tenute||[]).map(t=>t.foglio));
-  S.uscAnteprima=vecchia;
-  conf.forEach(v=>una(v,false)); forse.forEach(v=>una(v,true));
-  return out;
-}
-function uscPushPrevisioni(j){
-  const c=uscFoglioCfg(); if(!c.url || !S.orario || !uscPubblica()) return;
-  const prev=costruisciPrevisioni(j);
-  const sig=JSON.stringify(prev,(k,v)=>k==="calcolatoIl"?undefined:v);
-  if(sig===c.prevSig && Date.now()-(c.prevQuandoMs||0) < 30*60*1000) return;
-  if(c.prevTent && Date.now()-c.prevTent<20*1000 && c.prevErr) return;
-  c.prevTent=Date.now();
-  fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({token:c.token||"",azione:"previsioni",previsioni:prev})})
-    .then(r=>r.json()).then(r=>{
-      if(r&&r.ok){ c.prevSig=sig; c.prevQuandoMs=Date.now(); c.prevErr=""; c.prevN=r.scritte||0; }
-      else c.prevErr=(r&&r.errore)||"risposta non valida";
-      saveUscFoglio();
-    }).catch(e=>{ c.prevErr="lo script del foglio non è aggiornato alla versione 3 ("+descriviErrore(e)+")"; saveUscFoglio(); });
-}
-/* riga di stato per Sostituzioni e Uscite */
-function uscStatoHtml(){
-  const h=_uscStatoHtml();
-  if(!h) return "";
-  return `<div onclick="S.tab='uscfoglio'; render(); window.scrollTo(0,0)" style="cursor:pointer" title="Apri le impostazioni del foglio viaggi">${h}</div>`;
-}
-function _uscStatoHtml(){
-  const c=uscFoglioCfg(); if(!c.url) return "";
-  const st=c.autoStato; if(!st) return "";
-  const ora=iso=>iso?new Date(iso).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"}):"";
-  if(st.ok===false){
-    const dal=st.erroreDal?new Date(st.erroreDal).getTime():Date.now();
-    if(Date.now()-dal < 5*60*1000 && st.ultimaOk) return `<p class="hint" style="margin:6px 0">🔄 Ultima lettura delle uscite alle ${ora(st.ultimaOk)}</p>`;
-    return `<div class="promemo" style="background:var(--tint-red); border-left-color:var(--red)"><b>⚠ Non riesco a leggere il foglio viaggi</b> dalle ${ora(st.erroreDal)} — le uscite mostrate potrebbero non essere aggiornate.<br><span style="font-size:12.5px">${esc(st.errore||"")}</span></div>`;
-  }
-  if(st.bloccata) return `<div class="promemo" style="background:var(--tint-warm2); border-left-color:var(--amber)">${esc(st.bloccata)}</div>`;
-  return `<p class="hint" style="margin:6px 0">🔄 Uscite lette dal foglio viaggi alle ${ora(st.ultimaOk)}</p>`;
-}
-
-function uscScarica(){
-  const c = uscFoglioCfg();
-  if(!c.url){ toast("Prima imposta l'indirizzo del foglio"); return; }
-  S.uscErr=""; S.uscAttivo=true; render();
-  fetch(c.url + "?token=" + encodeURIComponent(c.token||""))
-    .then(r=>r.json())
-    .then(j=>{
-      S.uscAttivo=false;
-      if(!j.ok){ S.uscErr = "Il foglio ha risposto: " + (j.errore||"errore sconosciuto"); render(); return; }
-      preparaAnteprima(j.uscite||[], j.info||null, j.scartate||[]);
-      render();
-    })
-    .catch(err=>{ S.uscAttivo=false; S.uscErr=descriviErrore(err); render(); });
-}
-
-/* costruisce l'anteprima: cosa entra, cosa cambia, cosa sparisce, cosa non torna */
-function preparaAnteprima(righe, info, scartate, puro){
-  const classiNote = new Set(tutteLeClassi(S.orario));
-  const voci=[], problemi=[];
-  righe.forEach(r=>{
-    const accOk=[], accKo=[];
-    (r.accomp||[]).filter(Boolean).forEach(n=>{
-      const m = agganciaDocente(n);
-      if(m) accOk.push(m); else accKo.push(n);
-    });
-    /* riserve: restano a scuola e non creano sostituzioni; contano solo se subentrano (e allora diventano accompagnatori) */
-    const risOk=[], risRaw=[], risKo=[];
-    (r.riserve||[]).filter(Boolean).forEach(n=>{
-      const m = agganciaDocente(n);
-      if(m && !accOk.includes(m) && !risOk.includes(m)){ risOk.push(m); risRaw.push(n); } else if(!m) risKo.push(n);
-    });
-    if(risKo.length) problemi.push({rif:r.rif, nota:r.nota, tipo:"docente", valori:risKo.map(x=>x+" (riserva)")});
-    const clOk = (r.classi||[]).filter(c=>classiNote.has(c));
-    const clKo = (r.classi||[]).filter(c=>!classiNote.has(c));
-    if(accKo.length) problemi.push({rif:r.rif, nota:r.nota, tipo:"docente", valori:accKo});
-    if(clKo.length)  problemi.push({rif:r.rif, nota:r.nota, tipo:"classe",  valori:clKo});
-    if(!clOk.length) return;                 /* senza classi valide non è un'uscita utilizzabile */
-    const chiave = String(r.id||r.rif);       /* ID stabile scritto dallo script del foglio (v2); altrimenti il numero di riga */
-    voci.push({ id:"uf"+chiave, origine:"foglio", rif:chiave, rifRiga:String(r.rif||""), idFoglio:r.id||"", firma:r.firma||"",
-                nota:r.nota||"", dal:r.dal, al:r.al||r.dal,
-                ore:Array.isArray(r.ore)?r.ore:[], classi:clOk, accomp:accOk, riserve:risOk, riserveRaw:risRaw });
-  });
-  /* passaggio al codice ID dello script v2: le uscite già salvate col numero di riga prendono il nuovo id,
-     così non risultano "tolte e nuove" */
-  if(!puro) (S.uscite||[]).forEach(p=>{ if(p.origine!=="foglio") return;
-    const v=voci.find(x=>x.rifRiga && p.id==="uf"+x.rifRiga && x.id!==p.id && p.nota===x.nota && p.dal===x.dal);
-    if(v && !(S.uscite||[]).some(q=>q!==p && q.id===v.id)){ p.id=v.id; p.rif=v.rif; } });
-  if(!puro) (S.uscite||[]).forEach(p=>{ if(p.origine==="manuale" && p.rifOrig!=null){
-    const v=voci.find(x=>x.rifRiga && String(p.rifOrig)===String(x.rifRiga) && p.nota===x.nota && p.dal===x.dal);
-    if(v) p.rifOrig=v.rif; } });
-  const precedenti = (S.uscite||[]).filter(u=>u.origine==="foglio");
-  const manuali    = (S.uscite||[]).filter(u=>u.origine!=="foglio");
-  /* una voce del foglio che ho corretto a mano resta come l'ho messa io: non la sovrascrivo, ma dico cosa dice il foglio */
-  const tenute=[];
-  for(let i=voci.length-1;i>=0;i--){
-    const m=manuali.find(x=>x.rifOrig!=null && String(x.rifOrig)===String(voci[i].rif));
-    if(m){ tenute.push({mia:m, foglio:voci[i], diff:diffUscite([Object.assign({},m,{id:"k"})],[Object.assign({},voci[i],{id:"k"})])}); voci.splice(i,1); }
-  }
-  S.uscAnteprima = { voci, problemi, info, scartate: scartate||[], tenute,
-    cambia: diffUscite(precedenti, voci),
-    nuove: voci.filter(v=>!precedenti.some(p=>p.rif===v.rif)).length,
-    tolte: precedenti.filter(p=>!voci.some(v=>v.rif===p.rif)).length,
-    manuali: manuali.length };
-}
-
-function confermaImportUscite(){
-  const a = S.uscAnteprima; if(!a) return;
-  const manuali = (S.uscite||[]).filter(u=>u.origine!=="foglio");
-  const prima = JSON.parse(JSON.stringify(S.uscite||[]));
-  S.uscite = manuali.concat(a.voci);
-  tracciaUscite("Import dal foglio viaggi", prima, S.uscite);
-  const c = uscFoglioCfg(); c.ultimo = new Date().toISOString(); saveUscFoglio();
-  S.uscAnteprima=null; S.prospetto=null; save();
-  toast("Importate " + a.voci.length + " uscite" + (a.tenute&&a.tenute.length ? " · "+a.tenute.length+" corrette a mano restano come sono" : ""));
-  S.tab="uscita"; render();
-}
-
-/* elenco docenti negli appunti, un nome per riga, pronto da incollare nel foglio viaggi */
-function copiaElencoDocenti(){
-  if(!S.orario || !S.orario.docenti || !S.orario.docenti.length){ toast("Nessun orario caricato"); return; }
-  const txt = S.orario.docenti.map(d=>d.nome).sort((a,b)=>a.localeCompare(b)).join("\n");
-  const fatto = ()=> toast(S.orario.docenti.length + " nomi copiati");
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(txt).then(fatto).catch(()=>ripiegoCopia(txt,fatto));
-  } else ripiegoCopia(txt, fatto);
-}
-function ripiegoCopia(txt, fatto){
-  try{
-    const ta=document.createElement("textarea");
-    ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0";
-    document.body.appendChild(ta); ta.select();
-    document.execCommand("copy"); document.body.removeChild(ta); fatto();
-  }catch(e){ toast("Non riesco a copiare: seleziona i nomi dalla scheda Orario"); }
-}
-
-function renderUscFoglio(){
-  const c = uscFoglioCfg();
-  const a = S.uscAnteprima;
-  let out = `<div class="backlink" onclick="if(S.uscAnteprima && !confirm('Esci senza confermare? Le uscite lette dal foglio NON verranno scritte.')) return; S.uscAnteprima=null; S.tab='uscita'; render()">‹ Uscite didattiche</div>
-    <h2 class="sec">Importa dal foglio viaggi</h2>
-    <p class="hint" style="margin-top:0">Legge le uscite confermate dal foglio della funzione strumentale. Le uscite che hai scritto a mano non vengono toccate.</p>`;
-
-  if(S.uscErr) out += `<div class="promemo" style="background:var(--tint-red); border-left-color:var(--red)">${esc(S.uscErr)}</div>`;
-
-  if(!a){
-    const st=c.autoStato||{}, hh=iso=>iso?new Date(iso).toLocaleString("it-IT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—";
-    out += `<div class="regcard"><div class="reghead" style="cursor:default; display:block">
-        <label style="display:flex; gap:10px; align-items:center; font-weight:700; cursor:pointer">
-          <input type="checkbox" ${c.auto!==false?"checked":""} onchange="uscAutoToggle(this.checked)" style="width:20px; height:20px"> Lettura automatica del foglio viaggi</label>
-        <div class="regsub" style="margin-top:6px">${c.auto!==false?"Il foglio viene letto all'apertura e ogni minuto; le novità si applicano da sole e ti vengono segnalate in rosso.":"Spenta: le uscite cambiano solo con l'anteprima manuale qui sotto."}</div>
-        <div class="regsub">Ultima lettura riuscita: <b>${esc(hh(st.ultimaOk))}</b>${st.ok===false?` · <span style="color:var(--red)">ora in errore: ${esc(st.errore||"")}</span>`:""}</div>
-        ${st.cambia&&st.cambia.length?`<div class="regsub" style="margin-top:6px"><b>Ultime novità</b> (${esc(hh(st.cambiaQuando))}):<ul style="margin:3px 0 0; padding-left:18px">${st.cambia.map(x=>`<li>${x}</li>`).join("")}</ul></div>`:""}
-        <div class="row" style="display:flex; gap:8px; margin-top:10px"><button class="btn ghost" style="flex:1; padding:9px" onclick="uscLeggiAuto(0,true)">${S.uscAutoAttivo?"…":"↻ Leggi e applica ora"}</button></div>
-      </div></div>`;
-    if(c.url){
-      const mu=uscModuloUrl();
-      out += `<h2 class="sec">Modulo per la FS viaggi</h2>
-        <p class="hint" style="margin-top:0">La FS inserisce le uscite da qui (con tendine di classi e docenti, controllo dei doppioni e <b>previsione delle sostituzioni</b>). Servono l'indirizzo e la parola d'accesso <code>PASSWORD_FS</code> scritta nello script.</p>
-        <div class="field"><input type="text" readonly value="${esc(mu)}" onclick="this.select()"></div>
-        <button class="btn ghost" style="width:100%; margin-bottom:10px" onclick="copiaModuloUrl()">📋 Copia l'indirizzo del modulo</button>
-        <label style="display:flex; gap:10px; align-items:center; font-weight:600; margin:6px 0 4px"><input type="checkbox" ${uscPubblica()?"checked":""} onchange="uscPubblicaToggle(this.checked)" style="width:20px; height:20px"> Questo dispositivo manda alla FS elenco docenti e previsioni</label>
-        <div class="regsub">${c.anagQuando?`Elenco docenti inviato: ${esc(hh(c.anagQuando))} (${c.anagN||0} nomi${c.anagNuovi||c.anagTolti?`, +${c.anagNuovi||0} −${c.anagTolti||0}`:""})`:"Elenco docenti: non ancora inviato"}${c.anagErr?` · <span style="color:var(--red)">${esc(c.anagErr)}</span>`:""}</div>
-        <div class="regsub">${c.prevQuandoMs?`Previsioni inviate: ${esc(hh(new Date(c.prevQuandoMs).toISOString()))} (${c.prevN||0} uscite)`:"Previsioni: non ancora inviate"}${c.prevErr?` · <span style="color:var(--red)">${esc(c.prevErr)}</span>`:""}</div>
-        <p class="hint">Consiglio: tieni un solo dispositivo con questa casella attiva (il tuo), così non si sovrascrivono a vicenda.</p>`;
-    }
-    out += `<h2 class="sec">Anteprima manuale</h2>`;
-    if(c.ultimo) out += `<div class="promemo">Ultimo import manuale: ${esc(new Date(c.ultimo).toLocaleString("it-IT"))}</div>`;
-    out += `<button class="btn ghost" style="width:100%; margin-bottom:14px" onclick="uscScarica()">${S.uscAttivo?"…":"⬇ Leggi il foglio e mostra l'anteprima"}</button>
-      <div class="field"><label>Indirizzo del foglio (URL dell'applicazione web)</label>
-        <input type="text" value="${esc(c.url||"")}" placeholder="https://script.google.com/macros/s/.../exec"
-          oninput="S.uscFoglio.url=this.value.trim(); saveUscFoglio()"></div>
-      <div class="field"><label>Parola segreta</label>
-        <input type="text" value="${esc(c.token||"")}" placeholder="la stessa scritta nello script"
-          oninput="S.uscFoglio.token=this.value.trim(); saveUscFoglio()"></div>
-
-      <h2 class="sec">Elenco docenti del foglio</h2>
-      <p class="hint" style="margin-top:0">Le tendine degli accompagnatori pescano dalla scheda <b>Docenti</b> del foglio, che non si aggiorna da sola. Dopo ogni cambio di organico copia l'elenco e incollalo là, in colonna A a partire dalla riga 3.</p>
-      <button class="btn ghost" style="width:100%" onclick="copiaElencoDocenti()">📋 Copia elenco docenti (${(S.orario&&S.orario.docenti?S.orario.docenti.length:0)})</button>`;
-    el("main").innerHTML = out; return;
-  }
-
-  /* ---- anteprima ---- */
-  const nfo = a.info||{}; const tr = nfo.trovate||{};
-  out += `<div class="regcard"><div class="reghead" style="cursor:default"><div style="flex:1">
-      <b>${a.voci.length} uscite confermate sul foglio</b>
-      <div class="regsub">${a.nuove} nuove · ${a.tolte} non più presenti · ${a.manuali} inserite a mano restano intatte</div>
-    </div></div></div>`;
-
-  out += `<div class="promemo" style="background:var(--tint-red); border-left-color:var(--red)"><b>⚠ Non è ancora scritto nulla.</b> Finché non premi <b>Conferma</b> restano le uscite di prima; se esci da questa schermata l'anteprima va persa.</div>`;
-  if(a.cambia && a.cambia.length) out += `<div class="promemo"><b>Cosa cambia rispetto a ora:</b><ul style="margin:4px 0 0; padding-left:20px; font-size:13.5px; line-height:1.5">${a.cambia.map(x=>`<li>${x}</li>`).join("")}</ul></div>`;
-  else out += `<div class="promemo">Nessuna differenza rispetto alle uscite già presenti.</div>`;
-  if(a.tenute && a.tenute.length) out += `<div class="promemo" style="background:var(--tint-warm2); border-left-color:var(--amber)"><b>Corrette a mano da te — restano come sono:</b><ul style="margin:4px 0 0; padding-left:20px; font-size:13.5px; line-height:1.5">${a.tenute.map(t=>`<li>«${esc(t.mia.nota||"Uscita")}»${t.diff.length?` — il foglio dice diversamente: ${t.diff.map(x=>x.replace(/^[^:]*: /,"")).join("; ")}`:" — il foglio è uguale"}</li>`).join("")}</ul></div>`;
-  out += `<button class="btn" style="width:100%; margin-bottom:6px" ${a.voci.length||(a.tenute&&a.tenute.length)?"":"disabled"} onclick="confermaImportUscite()">Conferma e scrivi le uscite</button>`;
-
-  /* cosa ha letto davvero lo script: serve quando il risultato non torna */
-  if(nfo.scheda){
-    const male = [];
-    if(!tr.stato) male.push("Stato"); if(!tr.dal) male.push("Dal"); if(!tr.descrizione) male.push("Descrizione");
-    if(!tr.classi) male.push("colonne classe");
-    out += `<div class="promemo"${male.length?' style="background:var(--tint-red); border-left-color:var(--red)"':''}>
-      Letta la scheda <b>${esc(nfo.scheda)}</b> · ${nfo.righe||0} righe compilate<br>
-      Colonne riconosciute: ${tr.classi||0} classi · ${tr.acc||0} accompagnatori · ${tr.ore||0} ore
-      ${male.length?`<br><b>Intestazioni non trovate: ${male.join(", ")}</b>`:""}
-    </div>`;
-    if(male.length && nfo.intestazioni)
-      out += `<div class="promemo"><b>Intestazioni presenti sul foglio:</b><br>${esc(nfo.intestazioni)}</div>`;
-  }
-
-  if(a.problemi.length){
-    out += `<h2 class="sec">Da controllare</h2>
-      <p class="hint" style="margin-top:0">Queste voci del foglio non trovano riscontro nell'orario. Le uscite vengono importate lo stesso, ma <b>senza</b> questi nomi: correggi il foglio e rileggi.</p>`;
-    out += a.problemi.map(p=>`<div class="promemo" style="background:var(--tint-warm2); border-left-color:var(--amber)">
-        <b>${esc(p.nota||"riga "+p.rif)}</b><br>${p.tipo==="docente"?"Docente non trovato":"Classe non riconosciuta"}: ${p.valori.map(esc).join(", ")}
-      </div>`).join("");
-  }
-
-  if(a.scartate && a.scartate.length){
-    out += `<h2 class="sec">Righe saltate</h2>
-      <p class="hint" style="margin-top:0">Presenti sul foglio ma non importabili. Le prime due voci sono normali; le altre indicano qualcosa da correggere.</p>`;
-    out += a.scartate.map(x=>`<div class="promemo" style="background:var(--tint-warm2); border-left-color:var(--amber)">
-        <b>Riga ${x.riga}${x.nota?" · "+esc(x.nota):""}</b><br>${esc(x.motivo)}
-      </div>`).join("");
-  }
-  out += `<h2 class="sec">Cosa verrà scritto</h2>`;
-  if(!a.voci.length){
-    out += `<p class="hint">Nessuna uscita importabile. ${a.scartate&&a.scartate.length?"Vedi sopra il motivo riga per riga.":"Sul foglio non risultano righe compilate."}</p>`;
-  } else {
-    out += a.voci.slice().sort((x,y)=>x.dal.localeCompare(y.dal)).map(u=>{
-      const periodo = (u.dal===u.al) ? dataLeggibile(u.dal) : dataLeggibile(u.dal)+" → "+dataLeggibile(u.al);
-      const oreTx = (u.ore&&u.ore.length) ? u.ore.map(h=>h+"ª").join(", ") : "giornata intera";
-      return `<div class="regcard"><div class="reghead" style="cursor:default"><div style="flex:1">
-        <b>${esc(u.nota||"Uscita didattica")}</b>
-        <div class="regsub">${esc(periodo)} · ${esc(oreTx)}</div>
-        <div class="regsub">🎓 ${u.classi.map(esc).join(", ")}</div>
-        <div class="regsub">🧑‍🏫 ${u.accomp.map(n=>esc(cognomeBreve(n))).join(", ")||"nessun accompagnatore"}</div>
-        ${(u.riserve||[]).length?`<div class="regsub">🔁 Riserve: ${u.riserve.map(n=>esc(cognomeBreve(n))).join(", ")}</div>`:""}
-      </div></div></div>`;
-    }).join("");
-  }
-
-  out += `<div style="display:flex; gap:8px; margin-top:14px">
-      <button class="btn ghost" style="flex:1" onclick="S.uscAnteprima=null; render()">Annulla</button>
-      <button class="btn" style="flex:1" ${a.voci.length?"":"disabled"} onclick="confermaImportUscite()">Conferma</button>
-    </div>`;
-  el("main").innerHTML = out;
 }
 
 /* ---- NUOVO ANNO SCOLASTICO: azzeramento guidato ---- */
@@ -4794,9 +4149,7 @@ function renderUscita(){
     <h2 class="sec">Uscite didattiche</h2>`;
 
   if(!S.uscitaForm){
-    out += uscStatoHtml();
-    out += `<button class="btn" style="width:100%; margin-bottom:8px" onclick="nuovaUscita()">+ Nuova uscita</button>
-      <button class="btn ghost" style="width:100%; margin-bottom:14px" onclick="S.tab='uscfoglio'; render()">⬇ Importa dal foglio viaggi</button>`;
+    out += `<button class="btn" style="width:100%; margin-bottom:14px" onclick="nuovaUscita()">+ Nuova uscita</button>`;
     const lista = (S.uscite||[]).slice().sort((a,b)=> a.dal.localeCompare(b.dal)).reverse();
     if(!lista.length){
       out += `<p class="hint">Nessuna uscita registrata. Le classi in uscita non richiedono sostituzioni; gli accompagnatori risultano fuori sede e i loro colleghi liberi.</p>`;
@@ -4823,8 +4176,7 @@ function renderUscita(){
 
   // ---- form ----
   const f = S.uscitaForm;
-  out += `<p class="hint" style="margin:0 0 10px">Stai modificando un'uscita. <a href="#" style="color:var(--teal); font-weight:600" onclick="S.tab='uscfoglio'; render(); window.scrollTo(0,0); return false">⬇ Importa dal foglio viaggi · impostazioni</a> (la bozza resta qui).</p>
-    <div class="field"><label>Descrizione (facoltativa)</label>
+  out += `<div class="field"><label>Descrizione (facoltativa)</label>
       <input type="text" value="${esc(f.nota||"")}" placeholder="es. Teatro, Settimana bianca" oninput="S.uscitaForm.nota=this.value"></div>
     <div class="field"><label>Dal giorno</label>
       <input type="date" value="${f.dal}" onchange="S.uscitaForm.dal=this.value; if(S.uscitaForm.al<this.value) S.uscitaForm.al=this.value; render()"></div>
@@ -4882,9 +4234,6 @@ function salvaUscita(){
   S.uscite = S.uscite || [];
   const i = S.uscite.findIndex(u=>u.id===f.id);
   const prima = JSON.parse(JSON.stringify(S.uscite));
-  if(i>=0 && S.uscite[i].origine==="foglio"){      /* corretta a mano: da ora è tua, il prossimo import non la sovrascrive */
-    f.origine="manuale"; f.rifOrig=S.uscite[i].rif;
-  }
   if(i>=0) S.uscite[i]=f; else S.uscite.push(f);
   tracciaUscite(i>=0?"Modifica a mano":"Uscita inserita a mano", prima, S.uscite);
   S.uscitaForm=null; S.prospetto=null; save(); render();
@@ -5551,15 +4900,12 @@ function aggiungiDocenteExtra(){
   if(stesso.length && !confirm("Esiste già un docente con lo stesso cognome: "+stesso.join(", ")+".\nAggiungo comunque «"+nome+"»?")) return;
   S.orario.docentiExtra=docentiExtra().concat([{nome, nota:String(f.nota||"").trim()||NOTA_EXTRA}]);
   S.extraForm={nome:"", nota:NOTA_EXTRA};
-  const c=uscFoglioCfg(); c.anagSig=""; saveUscFoglio();      /* l'elenco per la FS si aggiorna alla prossima lettura */
-  save(); toast("Aggiunto: "+nome+" — fra poco compare anche nel modulo della FS"); render();
-  try{ uscPushAnagrafica(); }catch(_){}
+  save(); toast("Aggiunto: "+nome); render();
 }
 function togliDocenteExtra(nome){
   const n=(S.uscite||[]).filter(u=>(u.accomp||[]).includes(nome)||(u.riserve||[]).includes(nome)).length;
   if(!confirm("Rimuovere "+nome+" dall'elenco?"+(n?"\nRisulta in "+n+" "+(n===1?"uscita":"uscite")+": resterà scritto là, ma non sarà più proposto.":""))) return;
   S.orario.docentiExtra=docentiExtra().filter(d=>d.nome!==nome);
-  const c=uscFoglioCfg(); c.anagSig=""; saveUscFoglio();
   save(); render();
 }
 
@@ -5718,9 +5064,7 @@ if(S.orario){ S.day = giornoDaData(S.dataOggi); }
 render();
 /* controllo del foglio: all'avvio e ogni volta che l'app torna in primo piano (al massimo ogni 90 s) */
 setTimeout(()=>syncControlla(), 1200);
-document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="visible"){ syncControlla(); uscLeggiAuto(20); } });
-setTimeout(()=>uscLeggiAuto(0), 2500);
-setInterval(()=>{ if(document.visibilityState==="visible") uscLeggiAuto(55); }, 60*1000);
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="visible"){ syncControlla(); } });
 </script>
 </body>
 </html>
