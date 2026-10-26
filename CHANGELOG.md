@@ -2,6 +2,9 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026h — n. 8
+- **Uscita con sola delegazione** (come in SOStituto 26.10.2026a): spunta nel modulo delle uscite. La classe non è fuori sede, l'accompagnatore si sostituisce anche nelle ore in quella classe e i docenti della classe non vengono spostati altrove.
+
 ### 26.10.2026g — n. 7
 - I docenti col ruolo «Potenziamento» diventano ore «a disposizione» come nella secondaria: compaiono in Altro → Potenziamento, con la classe indicata dal PDF già assegnata a ogni ora. Coprono la classe se il titolare è assente e sono i primi candidati per le altre sostituzioni.
 
