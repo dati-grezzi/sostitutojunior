@@ -2,6 +2,9 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026g — n. 7
+- I docenti col ruolo «Potenziamento» diventano ore «a disposizione» come nella secondaria: compaiono in Altro → Potenziamento, con la classe indicata dal PDF già assegnata a ogni ora. Coprono la classe se il titolare è assente e sono i primi candidati per le altre sostituzioni.
+
 ### 26.10.2026f — n. 6
 - Intestazione e prospetto stampato: «Scuola primaria» al posto di «Mestica».
 

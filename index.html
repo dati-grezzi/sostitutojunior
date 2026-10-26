@@ -821,23 +821,31 @@ function costruisciOrarioPrimaria(lettura, opz){
       });
     }
   });
+  /* il potenziamento, nell'app, è «a disposizione» (cella DISP): la classe in cui il PDF lo
+     colloca diventa l'assegnazione di quell'ora (modificabile in Altro → Potenziamento) */
+  const potAssegn={};
   const docenti = Object.values(doc).sort((a,b)=>a.nome.localeCompare(b.nome)).map(d=>{
-    const cells={};
-    giorni.forEach(g=>ore.forEach(h=>{ cells[g+"|"+h]=d.cells[g+"|"+h]||{t:"VUOTA"}; }));
+    const cells={}, pot=(ruoli[d.nome]==="Potenziamento");
+    giorni.forEach(g=>ore.forEach(h=>{
+      const k=g+"|"+h, c=d.cells[k];
+      if(c && pot){ cells[k]={t:"DISP", det:"P·"+c.det}; potAssegn[d.nome+"|"+k]=c.det; }
+      else cells[k]=c||{t:"VUOTA"};
+    }));
     return {nome:d.nome, materia:ruoli[d.nome]||"Curricolare", cells};
   });
   return { giorni, ore, docenti, ignote:[], quando:new Date().toISOString(), fasce,
-           gruppo, _rep:{classi:blocchi.length, conflitti, avvisi, nNote, nNom} };
+           gruppo, potAssegn, _rep:{classi:blocchi.length, conflitti, avvisi, nNote, nNom} };
 }
 
 /* statistiche per il suggerimento dei ruoli: quante ore, in quante classi, quante da sola */
 function pdfStatisticheDocenti(orario){
   const per={};   /* "g|h|classe" → n. docenti */
-  orario.docenti.forEach(d=>{ for(const k in d.cells){ const c=d.cells[k]; if(c.t==="CLASSE"){ const x=k+"|"+c.det; per[x]=(per[x]||0)+1; } } });
+  const cl = c => c.t==="CLASSE" ? c.det : (c.t==="DISP" && /^P·/.test(c.det||"") ? c.det.slice(2) : null);
+  orario.docenti.forEach(d=>{ for(const k in d.cells){ const x0=cl(d.cells[k]); if(x0){ const x=k+"|"+x0; per[x]=(per[x]||0)+1; } } });
   const st={};
   orario.docenti.forEach(d=>{
     let ore=0, sola=0; const classi=new Set();
-    for(const k in d.cells){ const c=d.cells[k]; if(c.t!=="CLASSE") continue; ore++; classi.add(c.det); if(per[k+"|"+c.det]===1) sola++; }
+    for(const k in d.cells){ const x0=cl(d.cells[k]); if(!x0) continue; ore++; classi.add(x0); if(per[k+"|"+x0]===1) sola++; }
     st[d.nome]={ore, sola, classi:classi.size};
   });
   return st;
@@ -3026,8 +3034,8 @@ function azzeraPno(){
 
 /* ---- BACKUP e RIPRISTINO ---- */
 const BACKUP_VER = 1;
-const VERSIONE = "26.10.2026f";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
-const NUMERO_VERSIONE = 6;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
+const VERSIONE = "26.10.2026g";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
+const NUMERO_VERSIONE = 7;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
 function datiBackup(){
   return {
     app: "SOStituto", versione: BACKUP_VER,
@@ -5091,6 +5099,7 @@ function impGruppo(g){ IMP.gruppo=g; IMP.senzaSigla=null; IMP.ruoli={}; IMP.sugg
 function impSalva(){
   const {parsed}=impCostruisci();
   delete parsed._rep;
+  S.potAssign = parsed.potAssegn || {}; delete parsed.potAssegn;   /* assegnazioni del potenziamento: quelle del nuovo orario */
   const ex=docentiExtra().filter(e=>!parsed.docenti.some(d=>d.nome===e.nome));
   if(ex.length) parsed.docentiExtra=ex;
   S.orario=parsed; IMP=null; save();
