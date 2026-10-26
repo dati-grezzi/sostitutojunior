@@ -2,6 +2,15 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026e — n. 5
+- **Importazione dal PDF dell'orario della primaria** (una tabella per classe): il lettore ricostruisce righe e colonne dalle coordinate del testo; la libreria pdf.js si scarica solo alla prima importazione. Sostituisce l'import da Excel.
+- Ad ogni importazione si sceglie il gruppo (SM o SMA); le classi senza sigla nel PDF (es. «1A») si includono con una spunta, proposta nel gruppo in cui quella classe manca.
+- Nomi scritti in modo diverso (abbreviati o tagliati nel PDF) proposti come un'unica persona, con spunta per annullare.
+- Schermata dei ruoli (curricolare / sostegno / potenziamento) subito dopo la lettura, con un suggerimento dedotto da come il docente compare in orario.
+- «Da nominare» diventa un docente segnaposto per classe («Da nominare 2B»): non viene mai proposto come sostituto e non conta come presente.
+- **Compresenze**: se uno dei docenti di una cella è assente e un altro (non sostegno) è in classe, la classe è coperta e non serve sostituzione; se sono assenti entrambi, basta un sostituto.
+- «Entra hh.mm» / «Esce hh.mm» del PDF restano nella cella; se il docente è assente, il prospetto (schermo, stampa, WhatsApp) ricorda l'intervallo da coprire.
+
 ### 26.10.2026d — n. 4
 - Passaggio dati fra i dispositivi dello stesso referente (pc, tablet, telefono): in Altro → Backup, «Crea il link di trasferimento», lo si manda a sé stessi e lo si apre sull'altro dispositivo (conferma prima di importare, istantanea di sicurezza automatica). Si può anche incollare il link. Nessun server: i dati stanno nel link (parte «#»), compressi (~9 KB per un orario completo).
 

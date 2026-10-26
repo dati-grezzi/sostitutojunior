@@ -631,63 +631,223 @@ function classifica(raw){
   return {t:"IGNOTA", det:rawS};
 }
 
-/* ---------- import da Excel ---------- */
-function importaWorkbook(wb){
-  const nomiFogli = wb.SheetNames || [];
-  const ws = wb.Sheets["orario"] || wb.Sheets[nomiFogli[0]];
-  if(!ws) throw new Error("Il file non contiene fogli leggibili. Fogli visti: " + (nomiFogli.join(", ")||"nessuno") + ".");
-  const grid = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null});
-  // trova la riga intestazione (contiene DOCENTI) — tollerante su spazi e righe vuote iniziali
-  let hdr=-1;
-  for(let r=0;r<Math.min(grid.length,30);r++){
-    const rowU = (grid[r]||[]).map(x=>String(x==null?"":x).trim().toUpperCase());
-    if(rowU.includes("DOCENTI")){ hdr=r; break; }
-  }
-  if(hdr<0){
-    // errore diagnostico: dico cosa ho effettivamente ricevuto
-    const anteprima = grid.slice(0,3).map((r,i)=>
-      "riga "+i+": " + ((r||[]).slice(0,6).map(x=> x==null?"—":String(x).trim()).join(" | ") || "(vuota)")
-    ).join("  ·  ");
-    throw new Error(
-      "Intestazione non trovata (manca la riga con 'DOCENTI').\n\n" +
-      "Fogli nel file: " + (nomiFogli.join(", ")||"nessuno") + "\n" +
-      "Righe lette: " + grid.length + "\n" +
-      (grid.length ? "Inizio del foglio → " + anteprima
-                   : "Il foglio risulta VUOTO: probabilmente il file scelto non è quello giusto o è stato scaricato male.")
-    );
-  }
-  const dayRow=grid[hdr], hourRow=grid[hdr+1]||[];
-  const matCol = dayRow.findIndex(x=>String(x||"").toUpperCase()==="MATERIE");
-  const docCol = dayRow.findIndex(x=>String(x||"").toUpperCase()==="DOCENTI");
-  // mappa colonne → (giorno, ora), leggendo la griglia REALE (settimana lunga o corta)
-  const col2slot={}; let curDay=null;
-  for(let c=docCol+1;c<dayRow.length;c++){
-    const dv=String(dayRow[c]||"").toUpperCase().slice(0,3);
-    if(DAYSET.has(dv)) curDay=dv;
-    const hv=String(hourRow[c]||"").match(/\d/);
-    if(curDay && hv) col2slot[c]={g:curDay, h:parseInt(hv[0])};
-  }
-  const giorni=[...new Set(Object.values(col2slot).map(s=>s.g))].sort((a,b)=>GIORNI_ORD.indexOf(a)-GIORNI_ORD.indexOf(b));
-  const ore=[...new Set(Object.values(col2slot).map(s=>s.h))].sort((a,b)=>a-b);
+/* ---------- lettore PDF dell'orario della primaria ----------
+   L'orario arriva come PDF "una tabella per classe" (Ora × giorni), con le
+   compresenze scritte una sotto l'altra nella stessa cella. Il PDF non ha una
+   struttura di tabella: ricostruisco righe e colonne dalle coordinate del testo.
+   Le funzioni da qui a PDF-FINE non toccano il DOM: si provano anche da Node. */
+/*PDF-INIZIO*/
+const PDF_GIORNI = {"lunedì":"LUN","martedì":"MAR","mercoledì":"MER","giovedì":"GIO","venerdì":"VEN","sabato":"SAB"};
+const PDF_SCARTA = /^(firmato digitalmente|mcic|\(?documento informatico)|registro protocollo/i;
 
-  const docenti=[]; let materiaCorr=null; const ignote=[];
-  for(let r=hdr+2;r<grid.length;r++){
-    const row=grid[r]||[];
-    const mv=row[matCol], dv=row[docCol];
-    if(mv!=null && String(mv).trim()) materiaCorr=String(mv).trim();
-    if(dv==null || !String(dv).trim()) continue;
-    const nome=String(dv).trim();
-    const cells={};
-    for(const c in col2slot){
-      const {g,h}=col2slot[c];
-      const cl=classifica(row[c]);
-      cells[g+"|"+h]=cl;
-      if(cl.t==="IGNOTA") ignote.push({nome, g, h, val:cl.det});
-    }
-    docenti.push({nome, materia:materiaCorr, cells});
+/* items: [{s, x, y, w}] con y dall'alto verso il basso. Restituisce segmenti di testo
+   (un segmento = un pezzo di riga staccato dagli altri da uno spazio largo) */
+function pdfSegmenti(items){
+  const v = items.filter(i=>String(i.s).trim()!=="").slice().sort((a,b)=>a.y-b.y || a.x-b.x);
+  const righe=[]; 
+  for(const it of v){
+    const r = righe[righe.length-1];
+    if(r && Math.abs(it.y-r.y)<2) r.it.push(it); else righe.push({y:it.y, it:[it]});
   }
-  return { giorni, ore, docenti, ignote, quando:new Date().toISOString() };
+  const segs=[];
+  for(const r of righe){
+    r.it.sort((a,b)=>a.x-b.x);
+    let cur=null;
+    for(const it of r.it){
+      const gap = cur ? it.x-cur.x1 : 0;
+      if(cur && gap<7){ cur.t += (gap>1.2?" ":"")+it.s; cur.x1=it.x+it.w; cur.it.push(it); }
+      else { cur={x0:it.x, x1:it.x+it.w, y:r.y, t:it.s, it:[it]}; segs.push(cur); }
+    }
+  }
+  segs.forEach(s=>{ s.t=s.t.replace(/\s+/g," ").trim(); });
+  return segs.filter(s=>s.t);
 }
+
+function pdfClassificaTesto(t){
+  let m;
+  if(/^da\s*nominare$/i.test(t)) return {k:"nom"};
+  if(/^((entra|esce)\s*\d{1,2}\s*[.:]\s*\d{2}\s*)+$/i.test(t)){
+    const v=[]; t.replace(/(entra|esce)\s*(\d{1,2})\s*[.:]\s*(\d{2})/gi,(x,a,b,c)=>{ v.push({tipo:a.toLowerCase(), ora:String(+b).padStart(2,"0")+"."+c}); return x; });
+    return {k:"nota", note:v};
+  }
+  if(/^\(.*\)$/.test(t)) return {k:"annot", testo:t.slice(1,-1).trim()};
+  return {k:"nome", nome:t.toUpperCase()};
+}
+
+/* legge tutte le pagine. pagine = [{items:[…]}]. Restituisce {blocchi, avvisi} */
+function leggiOrarioPrimaria(pagine){
+  const blocchi=[], avvisi=[];
+  pagine.forEach((pg,ip)=>{
+    let segs = pdfSegmenti(pg.items).filter(s=>!PDF_SCARTA.test(s.t));
+    /* il titolo «CLASSE 3A SM» a volte è spezzato in pezzi lontani: lo ricompongo */
+    segs.filter(s=>/^CLASSE\b/i.test(s.t)).forEach(s=>{
+      let fine=s.x1;
+      segs.filter(o=>o!==s && Math.abs(o.y-s.y)<2 && o.x0>=s.x1-0.5 && o.x0-fine<60).sort((a,b)=>a.x0-b.x0).forEach(o=>{
+        if(o.x0-fine>=60) return;
+        s.t += " "+o.t; fine=o.x1; o.assorbito=true;
+      });
+      s.x1=fine;
+    });
+    segs = segs.filter(s=>!s.assorbito);
+    const titoli = segs.map((s,i)=>({s,i,m:s.t.match(/^CLASSE\s+(\S+?)(?:\s+(SMA|SM))?$/i)})).filter(x=>x.m);
+    titoli.forEach((tt,k)=>{
+      const y0=tt.s.y, y1 = k+1<titoli.length ? titoli[k+1].s.y : Infinity;
+      const mio = segs.filter(s=>s.y>=y0-0.5 && s.y<y1-0.5 && s!==tt.s);
+      const classe = tt.m[1].toUpperCase(), suff=(tt.m[2]||"").toUpperCase();
+      const nomeBl = "classe "+classe+(suff?" "+suff:"")+" (pagina "+(ip+1)+")";
+      const hd = mio.filter(s=>PDF_GIORNI[s.t.toLowerCase()]);
+      if(hd.length<2){ avvisi.push("Intestazione dei giorni non trovata: salto "+nomeBl+"."); return; }
+      hd.sort((a,b)=>a.x0-b.x0);
+      const cols = hd.map(s=>({g:PDF_GIORNI[s.t.toLowerCase()], cx:(s.x0+s.x1)/2}));
+      const passo = cols.length>1 ? (cols[cols.length-1].cx-cols[0].cx)/(cols.length-1) : 100;
+      const sinistra = cols[0].cx - passo/2;
+      const yHd = hd[0].y;
+      /* righe: etichette orarie nella colonna di sinistra */
+      const lab = mio.filter(s=>s.y>yHd+2 && s.x1<=sinistra+6)
+        .map(s=>({s, m:s.t.replace(/\s/g,"").match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/)})).filter(x=>x.m)
+        .sort((a,b)=>a.s.y-b.s.y);
+      if(!lab.length){ avvisi.push("Nessuna riga oraria in "+nomeBl+"."); return; }
+      const ore = lab.map(l=>({dalle:String(+l.m[1]).padStart(2,"0")+":"+l.m[2], alle:String(+l.m[3]).padStart(2,"0")+":"+l.m[4], y:l.s.y}));
+      const celle={};
+      /* confini fra colonne: a metà fra i centri delle intestazioni */
+      const confini = cols.slice(1).map((c,i)=>(cols[i].cx+c.cx)/2);
+      const colDi = x=>{ let i=0; while(i<confini.length && x>=confini[i]) i++; return i; };
+      for(const s0 of mio){
+        if(s0.y<=yHd+2 || s0.x1<=sinistra+6) continue;   /* intestazione o colonna orari */
+        let r=-1; for(let i=0;i<ore.length;i++) if(s0.y>=ore[i].y-2.5) r=i;
+        if(r<0) continue;
+        /* un segmento può contenere i nomi di due colonne vicine: lo riparto parola per parola */
+        const per={};
+        (s0.it||[{s:s0.t,x:s0.x0,w:s0.x1-s0.x0}]).forEach(it=>{ (per[colDi(it.x)]=per[colDi(it.x)]||[]).push(it); });
+        for(const ci in per){
+          const its=per[ci]; let t=""; let fine=null;
+          its.forEach(it=>{ if(fine!==null) t+=(it.x-fine>1.2?" ":""); t+=it.s; fine=it.x+it.w; });
+          t=t.replace(/\s+/g," ").trim(); if(!t) continue;
+          const key = cols[ci].g+"|"+(r+1);
+          (celle[key]=celle[key]||[]).push({t, y:s0.y, x0:its[0].x});
+        }
+      }
+      /* testo di ogni cella → elenco di docenti con eventuali note */
+      const out={};
+      for(const key in celle){
+        const lista=[]; let pend=[];
+        celle[key].sort((a,b)=>a.y-b.y||a.x0-b.x0).forEach(s=>{
+          const c = pdfClassificaTesto(s.t);
+          if(c.k==="nome"||c.k==="nom"){
+            const tk = {nome:c.k==="nom"?null:c.nome, note:pend}; pend=[]; lista.push(tk);
+          } else {
+            const ns = c.k==="nota" ? c.note.map(x=>(x.tipo==="entra"?"Entra ":"Esce ")+x.ora) : [c.testo];
+            ns.forEach(n=>{ if(lista.length) lista[lista.length-1].note.push(n); else pend.push(n); });
+          }
+        });
+        if(pend.length) avvisi.push("Nota senza docente ("+pend.join(", ")+") in "+nomeBl+", "+key.replace("|"," ora ")+".");
+        out[key]=lista;
+      }
+      blocchi.push({classe, suff, pagina:ip+1, giorni:cols.map(c=>c.g), ore:ore.map(o=>({dalle:o.dalle,alle:o.alle})), celle:out});
+    });
+  });
+  if(!blocchi.length) avvisi.push("Non ho trovato nessuna tabella «CLASSE …» in questo PDF: è davvero l'orario della primaria?");
+  return {blocchi, avvisi};
+}
+
+/* varianti dello stesso nome ("LIBERATORE M. ELENA" / "LIBERATORE MARIA ELE"):
+   stesso numero di parole, stessa prima parola, le altre una prefisso dell'altra.
+   Restituisce [{da, a, n}] con "da" da ricondurre ad "a" (la forma più frequente). */
+function pdfVariantiNome(conteggi){
+  const toks = n => n.replace(/\./g," ").split(/\s+/).filter(Boolean);
+  const nomi = Object.keys(conteggi), gruppi=[], usato=new Set();
+  const simili = (a,b)=>{
+    const A=toks(a), B=toks(b);
+    if(A.length!==B.length || A.length<2 || A[0]!==B[0]) return false;
+    for(let i=1;i<A.length;i++) if(!(A[i].startsWith(B[i])||B[i].startsWith(A[i]))) return false;
+    return true;
+  };
+  for(const n of nomi){
+    if(usato.has(n)) continue;
+    const g=nomi.filter(m=>m===n || (!usato.has(m) && simili(n,m)));
+    if(g.length>1){ g.forEach(x=>usato.add(x)); gruppi.push(g); }
+  }
+  const out=[];
+  gruppi.forEach(g=>{
+    /* se una sigla "M" potrebbe essere due persone diverse (MARIA / MARCO) non unisco */
+    const lunghe = g.filter(x=>toks(x).slice(1).every(w=>w.length>1));
+    const iniz = g.filter(x=>!lunghe.includes(x));
+    const compatibili = (x,y)=>simili(x,y);
+    const altro = lunghe.some((x,i)=>lunghe.some((y,j)=>j>i && !compatibili(x,y)));
+    if(altro) return;
+    g.sort((a,b)=>(conteggi[b]-conteggi[a]) || (b.length-a.length));
+    const canon=g[0];
+    g.slice(1).forEach(x=>out.push({da:x, a:canon, n:conteggi[x]}));
+  });
+  return out;
+}
+
+/* costruisce l'orario nel formato dell'app. opz = {gruppo:"SM"|"SMA", senzaSigla:bool,
+   fusioni:{variante:canonico}, ruoli:{nome:"Curricolare"|…}} */
+function costruisciOrarioPrimaria(lettura, opz){
+  const gruppo=(opz.gruppo||"").toUpperCase(), fus=opz.fusioni||{}, ruoli=opz.ruoli||{};
+  const scelti = lettura.blocchi.filter(b=> b.suff===gruppo || (b.suff==="" && opz.senzaSigla));
+  const avvisi=[], conflitti=[];
+  const viste=new Set(); const blocchi=[];
+  scelti.forEach(b=>{
+    if(viste.has(b.classe)){ avvisi.push("La classe "+b.classe+" compare due volte: tengo la prima."); return; }
+    viste.add(b.classe); blocchi.push(b);
+  });
+  const giorniSet=new Set(); let maxOre=0;
+  blocchi.forEach(b=>{
+    maxOre=Math.max(maxOre,b.ore.length);
+    for(const k in b.celle) if(b.celle[k].length) giorniSet.add(k.split("|")[0]);
+  });
+  const giorni=GIORNI_ORD.filter(g=>giorniSet.has(g));
+  const ore=Array.from({length:maxOre},(_,i)=>i+1);
+  const doc={};   /* nome → {cells} */
+  const nome = (t,classe)=> t.nome==null ? "Da nominare "+classe : (fus[t.nome]||t.nome);
+  const fasce={}; blocchi.forEach(b=>{ fasce[b.classe]=b.ore; });
+  let nNote=0, nNom=0;
+  blocchi.forEach(b=>{
+    for(const k in b.celle){
+      if(!giorniSet.has(k.split("|")[0])) continue;
+      b.celle[k].forEach(t=>{
+        const n = nome(t,b.classe); if(t.nome==null) nNom++;
+        const d = doc[n] || (doc[n]={nome:n, cells:{}});
+        const cur = d.cells[k];
+        const cella = {t:"CLASSE", det:b.classe};
+        if(t.note && t.note.length){ cella.note=t.note.join(" · "); nNote++; }
+        if(cur){
+          if(cur.det!==b.classe) conflitti.push({nome:n, k, a:cur.det, b:b.classe});
+          return;
+        }
+        d.cells[k]=cella;
+      });
+    }
+  });
+  const docenti = Object.values(doc).sort((a,b)=>a.nome.localeCompare(b.nome)).map(d=>{
+    const cells={};
+    giorni.forEach(g=>ore.forEach(h=>{ cells[g+"|"+h]=d.cells[g+"|"+h]||{t:"VUOTA"}; }));
+    return {nome:d.nome, materia:ruoli[d.nome]||"Curricolare", cells};
+  });
+  return { giorni, ore, docenti, ignote:[], quando:new Date().toISOString(), fasce,
+           gruppo, _rep:{classi:blocchi.length, conflitti, avvisi, nNote, nNom} };
+}
+
+/* statistiche per il suggerimento dei ruoli: quante ore, in quante classi, quante da sola */
+function pdfStatisticheDocenti(orario){
+  const per={};   /* "g|h|classe" → n. docenti */
+  orario.docenti.forEach(d=>{ for(const k in d.cells){ const c=d.cells[k]; if(c.t==="CLASSE"){ const x=k+"|"+c.det; per[x]=(per[x]||0)+1; } } });
+  const st={};
+  orario.docenti.forEach(d=>{
+    let ore=0, sola=0; const classi=new Set();
+    for(const k in d.cells){ const c=d.cells[k]; if(c.t!=="CLASSE") continue; ore++; classi.add(c.det); if(per[k+"|"+c.det]===1) sola++; }
+    st[d.nome]={ore, sola, classi:classi.size};
+  });
+  return st;
+}
+function pdfSuggerisciRuolo(s){
+  if(!s.ore) return "Curricolare";
+  if(s.sola/s.ore>=0.5) return "Curricolare";
+  return s.classi>=3 ? "Potenziamento" : "Sostegno";
+}
+/*PDF-FINE*/
 
 /* incompatibilità normative: un docente che non può MAI fare supplenza in una
    data classe (es. un parente dell'alunno). Esclusione assoluta, prima di ogni
@@ -698,6 +858,39 @@ function incompatibile(nome, classe){
   return (S.incompatibili||[]).includes(nome+"|"+classe);
 }
 function isSost(d){ return /sosteg/i.test(d.materia||""); }
+/* «Da nominare 2B»: segnaposto di un docente non ancora nominato. Non è una persona che si
+   possa mandare a sostituire e non conta come presente in classe, finché non gli si dà un nome
+   (Altro → Cambio docente). */
+function isSegnaposto(d){ return /^da nominare/i.test((d&&d.nome)||""); }
+/* come si dice, in una riga, perché una cella non ha sostituzione */
+function etichettaCoperta(c, breve){
+  const nm = breve ? (x=>cognomeBreve(x,16)) : (x=>x);
+  if(c.tipo==="compresenza") return "compresenza con "+nm(c.da);
+  if(c.tipo==="accorpata") return c.da ? "stesso sostituto di "+nm(c.con)+" ("+nm(c.da)+")" : "con "+nm(c.con)+": una sola sostituzione";
+  return nm(c.da)+" (potenz.)";
+}
+/* promemoria «Entra / Esce»: l'assente ha un orario parziale, l'intervallo va coperto comunque */
+function testoParziale(x){
+  const m=String(x.note).match(/(Entra|Esce)\s+(\d{2}\.\d{2})/i);
+  if(!m) return x.note;
+  return /entra/i.test(m[1]) ? "entra alle "+m[2]+": copri la classe fino a quell'ora" : "esce alle "+m[2]+": copri la classe da quell'ora";
+}
+function parzHtml(p, nome, h){
+  return (p.parziali||[]).filter(x=>x.nome===nome && x.h===h)
+    .map(x=>`<div class="ricewarn">⏱ ${esc(cognomeBreve(nome,16))}, ${h}ª ora: ${esc(testoParziale(x))}${/;|·/.test(x.note)?" ("+esc(x.note)+")":""}</div>`).join("");
+}
+/* compresenza: nella stessa classe e ora c'è un altro docente (non sostegno, non segnaposto),
+   che non è assente né scelto a mano altrove → la classe è coperta senza sostituzione */
+function compresenteIn(o, giorno, h, classe, docAssente, ctx, forzati){
+  for(const d of o.docenti){
+    if(d.nome===docAssente.nome || isSegnaposto(d) || isSost(d)) continue;
+    if(assenteAllOra(ctx, d.nome, h)) continue;
+    if(forzati && forzati.has(d.nome)) continue;      /* scelto a mano per un'altra classe */
+    const c=statoCella(d,giorno,h,o.ore);
+    if(c.t==="CLASSE" && c.det===classe) return d.nome;
+  }
+  return null;
+}
 
 /* ---- controllo suffisso lingua sui sostegni nelle ore di articolata ---- */
 function sostegniSenzaLingua(parsed, lingue){
@@ -938,6 +1131,7 @@ function candidati(o, classe, g, h, assenteObj, ctx, lingua){
   const pool=[];
   for(const d of o.docenti){
     if(incompatibile(d.nome, classe)) continue;
+    if(isSegnaposto(d)) continue;                     /* docente non ancora nominato */
     if(assenteAllOra(ctx, d.nome, h)) continue;
     if(ctx.occupati[g+"|"+h] && ctx.occupati[g+"|"+h].has(d.nome)) continue;  /* già impegnato */
     const st = statoLinguaEff(d,g,h,o.ore);
@@ -1065,7 +1259,10 @@ function generaProspetto(o, giorno, assenti, opts){
   // costruisco gli slot da coprire
   const slot=[];
   const note=[];
-  const coperte=[];       /* ore in cui il curricolare è assente ma la classe è già coperta dal potenziamento */
+  const coperte=[];       /* ore in cui il curricolare è assente ma la classe è già coperta (potenziamento o compresenza) */
+  const parziali=[];      /* ore con «Entra hh.mm» / «Esce hh.mm» di un docente assente: l'intervallo va coperto */
+  const accorpate=[];     /* più assenti nella stessa classe e ora: una sola sostituzione */
+  const slotClasse={};    /* "h|classe" → nome del primo assente che ha generato lo slot */
   const ovr = opts.override || {};
   const forzatiOra = {};  /* docenti scelti a mano, per ora: non vanno tolti per coprire una classe */
   for(const k in ovr){ if(!ovr[k]) continue; const hh=+k.slice(k.lastIndexOf("|")+1); (forzatiOra[hh]=forzatiOra[hh]||new Set()).add(ovr[k]); }
@@ -1076,6 +1273,7 @@ function generaProspetto(o, giorno, assenti, opts){
     for(const h of ore){
       const st=statoCella(doc,giorno,h,o.ore);
       if(cellaInGita(st,h)) continue;   /* la classe è in gita: non c'è nulla da coprire */
+      if(st.t==="CLASSE" && st.note && !sost) parziali.push({h, nome:a.nome, classe:st.det, note:st.note});
       if(st.t==="CLASSE"||st.t==="ARTIC"||st.t==="AR"){
         // il sostegno assente NON si sostituisce (salvo flag) SOLO per le sue ore di sostegno;
         // l'ora di AR (attività alternativa) è lezione vera → si copre come un curricolare
@@ -1105,6 +1303,16 @@ function generaProspetto(o, giorno, assenti, opts){
             (ctx.occupati[giorno+"|"+h] = ctx.occupati[giorno+"|"+h]||new Set()).add(daPot);
             continue;
           }
+          /* compresenza: un altro docente è già nella classe a quest'ora */
+          const daComp = (a.nome+"|"+h) in ovr ? null : compresenteIn(o, giorno, h, st.det, doc, ctx, forzatiOra[h]);
+          if(daComp){
+            coperte.push({h, a:doc, classe:st.det, da:daComp, tipo:"compresenza"});
+            continue;
+          }
+          /* due assenti insieme nella stessa classe: basta un sostituto */
+          const kc=h+"|"+st.det;
+          if(kc in slotClasse && !((a.nome+"|"+h) in ovr)){ accorpate.push({h, a:doc, classe:st.det, con:slotClasse[kc]}); continue; }
+          slotClasse[kc]=a.nome;
           slot.push({h, a:doc, classe:st.det, tipo:"sostituzione", lingua:null});
         }
       }
@@ -1147,7 +1355,9 @@ function generaProspetto(o, giorno, assenti, opts){
     esitiMap[key] = {...s, scelto:nome, motivo, rice:isRice(nome,s.h), fuori:isFuori(nome,s.h,motivo)};
   }
   const esiti = slot.map(s=> esitiMap[s.a.nome+"|"+s.h]);
-  return { giorno, esiti, note, coperte, pagamento: ctx.pagamento };
+  accorpate.forEach(ac=>{ const e=esitiMap[ac.con+"|"+ac.h];
+    coperte.push({h:ac.h, a:ac.a, classe:ac.classe, da:(e&&e.scelto)||null, tipo:"accorpata", con:ac.con}); });
+  return { giorno, esiti, note, coperte, parziali, accorpate, pagamento: ctx.pagamento };
 }
 
 /* tutte le classi presenti nell'orario, ordinate */
@@ -1609,8 +1819,11 @@ function stampaProspetto(){
     ? `<div class="pr-note">Sostegni assenti non sostituiti (la classe ha il docente curricolare): ${
         p.note.map(n=>esc(n.nome)+" — "+n.h+"ª ora ("+esc(fmtCl(n.classe))+")").join("; ")}</div>` : "";
   const copPr = (p.coperte||[]).length
-    ? `<div class="pr-note">Ore senza sostituzione perché la classe è già coperta dal potenziamento assegnato: ${
-        p.coperte.slice().sort((a,b)=>a.h-b.h).map(c=>c.h+"ª ora "+esc(fmtCl(c.classe))+" ("+esc(c.a.nome)+") — "+esc(c.da)).join("; ")}</div>` : "";
+    ? `<div class="pr-note">Ore senza sostituzione perché la classe è già coperta (potenziamento assegnato, compresenza o stesso sostituto): ${
+        p.coperte.slice().sort((a,b)=>a.h-b.h).map(c=>c.h+"ª ora "+esc(fmtCl(c.classe))+" ("+esc(c.a.nome)+") — "+esc(etichettaCoperta(c))).join("; ")}</div>` : "";
+  const parzPr = (p.parziali||[]).length
+    ? `<div class="pr-note"><b>Orari parziali da coprire:</b> ${
+        p.parziali.slice().sort((a,b)=>a.h-b.h).map(x=>x.h+"ª ora "+esc(fmtCl(x.classe))+" — "+esc(x.nome)+" "+esc(testoParziale(x))).join("; ")}</div>` : "";
   const usc = usciteAttive(iso).map(u=>
     `<div class="pr-note">Uscita didattica: ${esc(u.nota||"—")} — classi ${(u.classi||[]).map(esc).join(", ")} fuori sede.</div>`).join("");
 
@@ -1629,7 +1842,7 @@ function stampaProspetto(){
       </tr></thead>
       <tbody>${corpo}</tbody>
     </table>
-    ${usc}${nonSost}${copPr}
+    ${usc}${nonSost}${copPr}${parzPr}
     <div class="pr-foot">
       <div>Ore a pagamento: <b>${p.pagamento||0}</b> — Sostituzioni disposte: <b>${righe.filter(e=>e.scelto).length}</b></div>
       <div>Da allegare al registro delle presenze.</div>
@@ -1962,7 +2175,7 @@ function renderAltro(){
     { tab:"flag",    ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2l7 2.8v5.1c0 4-2.9 7.6-7 8.7-4.1-1.1-7-4.7-7-8.7V6l7-2.8z"/><path d="M9.3 12.1l1.9 1.9 3.5-3.9"/></svg>`, tit:"Sostegni non derogabili", sub:(S.flagOggi||[]).length?`${S.flagOggi.length} segnalati \u2014 non verranno mai spostati`:"Alunni gravi con assistenza continua" },
     { tab:"potenz",  ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.6"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></svg>`, tit:"Potenziamento",      sub:nPno?`${nPno} ore marcate Pno`:"Marca le ore non disponibili senza toccare l'Excel" },
     { tab:"dove",    ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20.5 20.5l-4.7-4.7"/></svg>`, tit:"Dov'è",              sub:"Trova un docente o una classe in un momento preciso" },
-    { tab:"importa", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>`, tit:"Importa l'orario",   sub:"Carica il file Excel — poche volte l'anno" },
+    { tab:"importa", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>`, tit:"Importa l'orario",   sub:"Carica il PDF dell'orario — poche volte l'anno" },
     { tab:"cambiodoc", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.4-3.2 2.6-5 5.5-5s5.1 1.8 5.5 5"/><path d="M16 5.5h5m0 0-1.8-1.8M21 5.5l-1.8 1.8"/><path d="M21 12h-5m0 0 1.8-1.8M16 12l1.8 1.8" transform="translate(0 2)"/></svg>`, tit:"Cambio e aggiunta docente", sub:"Subentra un supplente, correggi un nome, aggiungi un docente del pomeriggio" },
     { tab:"backup",  ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="9.5" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/><circle cx="12" cy="15" r="1.1"/></svg>`, tit:"Backup e ripristino", sub:"Salva tutto in un file — o rimetti a posto dopo un guaio" },
     { tab:"incompat", ic:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`, tit:"Incompatibilità", sub:"Docenti che non possono mai fare supplenza in una data classe" },
@@ -2332,7 +2545,8 @@ function archiviaRegistro(){
       motivo:e.motivo, tipo:e.tipo||"", rice:!!e.rice, fuori:!!e.fuori, svuotata:!!e.svuotata, manuale:!!e.manuale,
       gruppo:e.gruppo||"", lingua:e.lingua||"" })),
     note: (p.note||[]).map(n=>({nome:n.nome, h:n.h, classe:n.classe})),
-    coperte: (p.coperte||[]).map(c=>({h:c.h, assente:c.a.nome, classe:c.classe, da:c.da})),
+    coperte: (p.coperte||[]).map(c=>({h:c.h, assente:c.a.nome, classe:c.classe, da:c.da, tipo:c.tipo||"", con:c.con||""})),
+    parziali: (p.parziali||[]).map(x=>({h:x.h, nome:x.nome, classe:x.classe, note:x.note})),
     salvato: new Date().toISOString()
   };
   ricalcolaRestituzioni();
@@ -2354,7 +2568,8 @@ function riapriInSostituzioni(iso){
       motivo:r.motivo, tipo:r.tipo||"", rice:!!r.rice, fuori:!!r.fuori, svuotata:!!r.svuotata, manuale:!!r.manuale,
       gruppo:r.gruppo||"", lingua:r.lingua||"", annullata:!!r.annullata })),
     note: (rec.note||[]).map(n=>({nome:n.nome, h:n.h, classe:n.classe})),
-    coperte: (rec.coperte||[]).map(c=>({h:c.h, a:{nome:c.assente}, classe:c.classe, da:c.da})),
+    coperte: (rec.coperte||[]).map(c=>({h:c.h, a:{nome:c.assente}, classe:c.classe, da:c.da, tipo:c.tipo, con:c.con})),
+    parziali: rec.parziali||[],
     pagamento: rec.pagamento||0
   };
   S.assentiOggi = {}; (rec.assenti||[]).forEach(a=>{ S.assentiOggi[a.nome]=a.ore; });
@@ -2811,8 +3026,8 @@ function azzeraPno(){
 
 /* ---- BACKUP e RIPRISTINO ---- */
 const BACKUP_VER = 1;
-const VERSIONE = "26.10.2026d";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
-const NUMERO_VERSIONE = 4;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
+const VERSIONE = "26.10.2026e";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
+const NUMERO_VERSIONE = 5;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
 function datiBackup(){
   return {
     app: "SOStituto", versione: BACKUP_VER,
@@ -4102,7 +4317,7 @@ function renderRegistro(){
         out += `<div class="pnote" style="margin:8px 12px">Sostegni non sostituiti: ${rec.note.map(n=>esc(n.nome)+" "+n.h+"ª").join(", ")}</div>`;
       }
       if(rec.coperte && rec.coperte.length){
-        out += `<div class="pnote" style="margin:8px 12px">Senza sostituzione, coperte dal potenziamento assegnato: ${rec.coperte.map(c=>c.h+"ª "+esc(fmtCl(c.classe))+" ("+esc(cognomeBreve(c.assente))+" → "+esc(cognomeBreve(c.da))+")").join(", ")}</div>`;
+        out += `<div class="pnote" style="margin:8px 12px">Senza sostituzione, classe già coperta: ${rec.coperte.map(c=>c.h+"ª "+esc(fmtCl(c.classe))+" ("+esc(cognomeBreve(c.assente))+" → "+esc(etichettaCoperta(c,true))+")").join(", ")}</div>`;
       }
       out += `<div style="padding:0 12px 10px">
         ${S.ruolo==="operativo" ? "" : `<button class="btn ghost" style="width:100%; font-size:13px; padding:8px; margin-bottom:8px" onclick="riapriInSostituzioni('${iso}')">↩ Apri nella home Sostituzioni</button>`}
@@ -4171,7 +4386,8 @@ function condividiWhatsAppRegistro(iso){
   const rec=S.registro[iso];
   const p={ giorno:rec.giorno, pagamento:rec.pagamento,
     esiti: rec.righe.filter(r=>!r.annullata).map(r=>({h:r.h, a:{nome:r.assente}, classe:r.classe, scelto:r.scelto, motivo:r.motivo, tipo:r.tipo, rice:r.rice})),
-    coperte: (rec.coperte||[]).map(c=>({h:c.h, a:{nome:c.assente}, classe:c.classe, da:c.da})) };
+    coperte: (rec.coperte||[]).map(c=>({h:c.h, a:{nome:c.assente}, classe:c.classe, da:c.da, tipo:c.tipo, con:c.con})),
+    parziali: rec.parziali||[] };
   const t = testoWhatsAppData(p, iso);
   if(navigator.share){ navigator.share({text:t}).catch(()=>copiaTesto(t)); } else copiaTesto(t);
 }
@@ -4200,7 +4416,7 @@ function renderProspettoHTML(p){
         if(copOra[h]){
           /* il curricolare è assente ma un potenziamento è assegnato a questa classe: non serve sostituzione */
           const c=copOra[h];
-          html += `<div class="prow vuotarow"><span class="ph">${h}ª</span><span class="pcl">${esc(fmtCl(c.classe))}</span><span class="pto nsub">nessuna sostituzione</span><span class="pmot">coperta da ${esc(cognomeBreve(c.da))} (potenz.)</span></div>`;
+          html += `<div class="prow vuotarow"><span class="ph">${h}ª</span><span class="pcl">${esc(fmtCl(c.classe))}</span><span class="pto nsub">nessuna sostituzione</span><span class="pmot">${esc(c.tipo==="compresenza"||c.tipo==="accorpata"?etichettaCoperta(c,true):"coperta da "+cognomeBreve(c.da)+" (potenz.)")}</span></div>${parzHtml(p, nome, h)}`;
         } else if(h>minH && h<maxH){
           html += `<div class="prow vuotarow"><span class="ph">${h}ª</span><span class="pcl">—</span><span class="pto nsub">nessuna sostituzione</span></div>`;
         }
@@ -4210,7 +4426,7 @@ function renderProspettoHTML(p){
       const aperto = S.apertoRiga===key;
       const chevron = `<b class="chev">${aperto?'▲':'▾'}</b>`;
       const fuoriWarn = e.fuori ? `<div class="ricewarn">⏱ recupero fuori orario: ${esc(e.scelto)} entra prima o esce dopo (ora attaccata al suo servizio)</div>` : "";
-      const riceWarn = fuoriWarn + (e.rice ? `<div class="ricewarn ${/pagamento/.test(e.motivo)?'pay':''}">⚠ è la sua ora di ricevimento${/pagamento/.test(e.motivo)?' — e sarebbe a pagamento':''}</div>` : "");
+      const riceWarn = parzHtml(p, e.a.nome, e.h) + fuoriWarn + (e.rice ? `<div class="ricewarn ${/pagamento/.test(e.motivo)?'pay':''}">⚠ è la sua ora di ricevimento${/pagamento/.test(e.motivo)?' — e sarebbe a pagamento':''}</div>` : "");
       const clLab = clLabel(e);
       const artic = !!(e.gruppo && e.lingua);
       if(e.svuotata){
@@ -4342,9 +4558,15 @@ function testoWhatsAppData(p, iso){
     t += `${e.h}ª  ${cl}  ${ass} → *${sost}*${extra}\n`;
   });
   if(p.coperte && p.coperte.length){
-    t = t.trimEnd() + `\n\n_Nessuna sostituzione, classe già coperta dal potenziamento:_\n`;
+    t = t.trimEnd() + `\n\n_Nessuna sostituzione, classe già coperta:_\n`;
     p.coperte.slice().sort((a,b)=>a.h-b.h).forEach(c=>{
-      t += `${c.h}ª  ${c.classe}  ${cognomeBreve(c.a.nome,14)} → ${cognomeBreve(c.da,14)} (potenz.)\n`;
+      t += `${c.h}ª  ${c.classe}  ${cognomeBreve(c.a.nome,14)} → ${etichettaCoperta(c,true)}\n`;
+    });
+  }
+  if(p.parziali && p.parziali.length){
+    t = t.trimEnd() + `\n\n_Orari parziali da coprire:_\n`;
+    p.parziali.slice().sort((a,b)=>a.h-b.h).forEach(x=>{
+      t += `${x.h}ª  ${x.classe}  ${cognomeBreve(x.nome,14)} ${testoParziale(x)}\n`;
     });
   }
   return t.trimEnd();
@@ -4721,24 +4943,158 @@ function togliDocenteExtra(nome){
   save(); render();
 }
 
+/* ---- caricamento del lettore PDF (solo quando serve, la prima volta scarica la libreria) ---- */
+function caricaPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise((ok,ko)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload=()=>{ try{
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      ok(window.pdfjsLib);
+    }catch(e){ ko(e); } };
+    s.onerror=()=>ko(new Error("Non riesco a scaricare il lettore PDF: la prima volta serve la connessione a internet."));
+    document.head.appendChild(s);
+  });
+}
+async function pdfPagine(buffer){
+  const lib=await caricaPdfJs();
+  const pdf=await lib.getDocument({data:buffer}).promise;
+  const out=[];
+  for(let n=1;n<=pdf.numPages;n++){
+    const p=await pdf.getPage(n), vp=p.getViewport({scale:1}), tc=await p.getTextContent();
+    out.push({items:tc.items.filter(i=>i.str!=="").map(i=>({s:i.str, x:i.transform[4], y:vp.height-i.transform[5], w:i.width}))});
+  }
+  return out;
+}
+
+/* ---- pagina: importa l'orario (PDF della primaria) ---- */
+let IMP = null;   /* stato dell'importazione in corso: lettura del PDF + scelte */
+
 function renderImporta(){
   const has=S.orario;
   el("main").innerHTML = `
     <div class="backlink" onclick="S.tab='altro'; render()">‹ Altro</div>
     <h2 class="sec">Importa l'orario</h2>
     <div class="drop">
-      <p style="margin:0 0 14px; color:var(--ink-soft); font-size:14px">Carica il file Excel dell'orario<br>(foglio “orario”).</p>
-      <input type="file" id="file" accept=".xlsx,.xls" style="display:none">
-      <button class="btn" onclick="document.getElementById('file').click()">Scegli il file</button>
+      <p style="margin:0 0 14px; color:var(--ink-soft); font-size:14px">Carica il PDF dell'orario delle classi<br>(una tabella per classe, anche con le compresenze).</p>
+      <input type="file" id="file" accept=".pdf,application/pdf" style="display:none">
+      <button class="btn" onclick="document.getElementById('file').click()">Scegli il PDF</button>
     </div>
     <div id="report" class="report"></div>
-    ${has?`<div class="report"><div class="stat"><span>Orario in memoria</span><b>${S.orario.docenti.length} docenti · ${S.orario.giorni.length} giorni × ${S.orario.ore.length} ore</b></div>
-      <p class="hint">Importando un nuovo file sostituisci quello attuale. I dati restano solo su questo dispositivo.</p></div>`:""}
-    <h2 class="sec" style="margin-top:26px">Docenti di 2ª lingua</h2>
-    <p class="hint" style="margin-top:0">Serve per gestire le classi articolate: l'app deve sapere chi fa francese e chi spagnolo. Si imposta una volta.</p>
-    <div class="field"><label>Francese</label>${selDocente("FR")}</div>
-    <div class="field"><label>Spagnolo</label>${selDocente("SP")}</div>`;
+    ${has?`<div class="report"><div class="stat"><span>Orario in memoria</span><b>${S.orario.gruppo?esc(S.orario.gruppo)+" · ":""}${S.orario.docenti.length} docenti · ${S.orario.giorni.length} giorni × ${S.orario.ore.length} ore</b></div>
+      <p class="hint">Importando un nuovo file sostituisci quello attuale. I dati restano solo su questo dispositivo.</p></div>`:""}`;
   el("file").addEventListener("change", onFile);
+  if(IMP) impMostra();
+}
+
+function onFile(ev){
+  const f=ev.target.files[0]; if(!f) return;
+  el("report").innerHTML=`<p class="hint">Leggo il PDF…</p>`;
+  const rd=new FileReader();
+  rd.onload = async e=>{
+    try{
+      const pagine=await pdfPagine(new Uint8Array(e.target.result));
+      const lett=leggiOrarioPrimaria(pagine);
+      if(!lett.blocchi.length) throw new Error(lett.avvisi.join("\n"));
+      const conta={SM:0,SMA:0,"":0};
+      lett.blocchi.forEach(b=>{ conta[b.suff]=(conta[b.suff]||0)+1; });
+      /* di default il gruppo con più classi; la classe senza sigla va dove manca */
+      const gruppo = S.orario&&S.orario.gruppo ? S.orario.gruppo : (conta.SM>=conta.SMA?"SM":"SMA");
+      IMP={ lett, conta, gruppo, senzaSigla:null, fus:{}, ruoli:{}, sugg:{} };
+      impMostra();
+    }catch(err){
+      IMP=null;
+      el("report").innerHTML=`<div class="flag" style="white-space:pre-wrap; line-height:1.5">Non riesco a leggere il file: ${esc(err.message)}</div>`;
+    }
+  };
+  rd.readAsArrayBuffer(f);
+}
+
+/* le classi senza sigla (es. «1A») appartengono al gruppo in cui quella classe manca */
+function impGruppoSenzaSigla(lett){
+  const senza=lett.blocchi.filter(b=>!b.suff); if(!senza.length) return null;
+  const gr=new Set();
+  senza.forEach(b=>{
+    const dove=["SM","SMA"].filter(g=>!lett.blocchi.some(x=>x.suff===g && x.classe===b.classe));
+    if(dove.length===1) gr.add(dove[0]); else gr.add("?");
+  });
+  return gr.size===1 ? [...gr][0] : "?";
+}
+
+function impCostruisci(){
+  const I=IMP;
+  const nomi={};
+  I.lett.blocchi.forEach(b=>{ if(b.suff!==I.gruppo && !(b.suff==="" && I.senzaSigla)) return;
+    for(const k in b.celle) b.celle[k].forEach(t=>{ if(t.nome) nomi[t.nome]=(nomi[t.nome]||0)+1; }); });
+  const varianti=pdfVariantiNome(nomi);
+  const fusioni={}; varianti.forEach(v=>{ if(I.fus[v.da]!==false) fusioni[v.da]=v.a; });
+  let parsed=costruisciOrarioPrimaria(I.lett,{gruppo:I.gruppo, senzaSigla:I.senzaSigla, fusioni, ruoli:I.ruoli});
+  const stat=pdfStatisticheDocenti(parsed);
+  parsed.docenti.forEach(d=>{ if(!(d.nome in I.ruoli)){
+    I.ruoli[d.nome] = /^Da nominare/.test(d.nome) ? "Curricolare" : pdfSuggerisciRuolo(stat[d.nome]);
+    if(!/^Da nominare/.test(d.nome)) I.sugg[d.nome]=true;
+  } });
+  parsed=costruisciOrarioPrimaria(I.lett,{gruppo:I.gruppo, senzaSigla:I.senzaSigla, fusioni, ruoli:I.ruoli});
+  return {parsed, varianti, stat};
+}
+
+function impMostra(){
+  const I=IMP; if(!I || !el("report")) return;
+  if(I.senzaSigla===null){
+    const gs=impGruppoSenzaSigla(I.lett);
+    I.senzaSigla = gs===null ? false : (gs===I.gruppo);
+  }
+  const {parsed, varianti, stat}=impCostruisci();
+  const rep=parsed._rep;
+  const nSenza=I.conta[""]||0;
+  const gs=impGruppoSenzaSigla(I.lett);
+  let h=`<div class="field"><label>Per quale gruppo importo l'orario?</label>
+    <div class="orebtns">${["SM","SMA"].map(g=>`<div class="oreb${I.gruppo===g?' on':''}" onclick="impGruppo('${g}')">${g} · ${I.conta[g]||0} classi</div>`).join("")}</div></div>`;
+  if(nSenza){
+    const nomi=I.lett.blocchi.filter(b=>!b.suff).map(b=>b.classe).join(", ");
+    h+=`<label style="display:flex; gap:9px; align-items:flex-start; font-size:14px; margin:8px 0 4px">
+      <input type="checkbox" ${I.senzaSigla?'checked':''} onchange="IMP.senzaSigla=this.checked; impMostra()" style="margin-top:3px">
+      <span>Includi ${nSenza===1?"la classe":"le classi"} <b>${esc(nomi)}</b>, che nel PDF ${nSenza===1?"non ha":"non hanno"} la sigla SM/SMA
+      ${gs&&gs!=="?"?`<br><span class="hint">Di solito ${nSenza===1?"è":"sono"} di ${esc(gs)}: lì ${nSenza===1?"manca":"mancano"} nell'elenco.</span>`:""}</span></label>`;
+  }
+  h+=`<div class="stat"><span>Classi lette</span><b>${rep.classi}</b></div>
+    <div class="stat"><span>Docenti</span><b>${parsed.docenti.length}</b></div>
+    <div class="stat"><span>Griglia</span><b>${parsed.giorni.join(" ")} · ${parsed.ore.length} ore</b></div>
+    <div class="stat"><span>«Da nominare»</span><b>${rep.nNom} ore</b></div>
+    <div class="stat"><span>Note Entra / Esce</span><b>${rep.nNote}</b></div>`;
+  [...I.lett.avvisi, ...rep.avvisi].forEach(a=>{ h+=`<div class="flag">${esc(a)}</div>`; });
+  if(rep.conflitti.length){
+    h+=`<div class="flag"><b>Docenti in due classi alla stessa ora</b> (tengo la prima):<br>${rep.conflitti.slice(0,8).map(c=>esc(cognomeBreve(c.nome))+" · "+c.k.replace("|"," ")+"ª: "+esc(c.a)+" / "+esc(c.b)).join("<br>")}${rep.conflitti.length>8?`<br>…e altri ${rep.conflitti.length-8}`:""}</div>`;
+  }
+  if(varianti.length){
+    h+=`<h2 class="sec" style="margin-top:22px">Nomi scritti in modo diverso</h2>
+      <p class="hint" style="margin-top:0">Sembrano la stessa persona (nome abbreviato o tagliato nel PDF). Togli la spunta se sono due persone.</p>`
+      +varianti.map(v=>`<label style="display:flex; gap:9px; font-size:14px; margin:4px 0"><input type="checkbox" ${I.fus[v.da]!==false?'checked':''} onchange="IMP.fus['${esc(v.da).replace(/'/g,"\\'")}']=this.checked; impMostra()">
+        <span>${esc(v.da)} <span class="hint">→</span> <b>${esc(v.a)}</b></span></label>`).join("");
+  }
+  h+=`<h2 class="sec" style="margin-top:22px">Ruolo di ciascun docente</h2>
+    <p class="hint" style="margin-top:0">Il PDF non dice chi è sostegno o potenziamento: l'ho dedotto da come compaiono in orario (<i>suggerito</i> = da controllare). Il sostegno assente non viene sostituito; la compresenza copre la classe.</p>`;
+  h+=parsed.docenti.map(d=>{
+    const s=stat[d.nome]||{ore:0,classi:0}; const nom=/^Da nominare/.test(d.nome);
+    const sel=["Curricolare","Sostegno","Potenziamento"].map(r=>`<option ${I.ruoli[d.nome]===r?'selected':''}>${r}</option>`).join("");
+    return `<div class="stat" style="align-items:center; gap:8px"><span style="flex:1; min-width:0">${esc(d.nome)}<br><span class="hint">${s.ore} ore · ${s.classi} ${s.classi===1?"classe":"classi"}${I.sugg[d.nome]?" · suggerito":""}</span></span>
+      <select style="width:auto" onchange="IMP.ruoli['${esc(d.nome).replace(/'/g,"\\'")}']=this.value; delete IMP.sugg['${esc(d.nome).replace(/'/g,"\\'")}']; impMostra()">${sel}</select></div>`;
+  }).join("");
+  h+=`<button class="btn" style="margin-top:14px" id="confirm">Salva questo orario</button>`;
+  const y=window.scrollY;
+  el("report").innerHTML=h;
+  el("confirm").addEventListener("click", impSalva);
+  window.scrollTo(0,y);
+}
+function impGruppo(g){ IMP.gruppo=g; IMP.senzaSigla=null; IMP.ruoli={}; IMP.sugg={}; impMostra(); }
+function impSalva(){
+  const {parsed}=impCostruisci();
+  delete parsed._rep;
+  const ex=docentiExtra().filter(e=>!parsed.docenti.some(d=>d.nome===e.nome));
+  if(ex.length) parsed.docentiExtra=ex;
+  S.orario=parsed; IMP=null; save();
+  S.tab="orario"; S.day=parsed.giorni[0]; S.selDoc=""; S.selClasse=""; S.prospetto=null; render();
 }
 
 /* ---- pagina: sostegni non derogabili ---- */
@@ -4790,60 +5146,6 @@ function aggiungiFlag(classe){
 function rimuoviFlag(key){
   S.flagOggi = (S.flagOggi||[]).filter(k=>k!==key);
   S.prospetto=null; save(); render();
-}
-
-function selDocente(lang){
-  // menù dei docenti (se l'orario è caricato) per assegnare la lingua
-  const cur=S.lingue[lang]||"";
-  if(!S.orario){
-    return `<input type="text" value="${esc(cur)}" placeholder="Cognome docente"
-      onchange="S.lingue['${lang}']=this.value.trim(); save()">`;
-  }
-  const docs=[...S.orario.docenti].map(d=>d.nome).sort((a,b)=>a.localeCompare(b));
-  const opts=[`<option value="">— nessuno —</option>`]
-    .concat(docs.map(n=>`<option ${n===cur?'selected':''}>${esc(n)}</option>`)).join("");
-  return `<select onchange="S.lingue['${lang}']=this.value; save(); render()">${opts}</select>`;
-}
-
-function onFile(ev){
-  const f=ev.target.files[0]; if(!f) return;
-  const rd=new FileReader();
-  rd.onload = e=>{
-    try{
-      const wb=XLSX.read(new Uint8Array(e.target.result), {type:"array"});
-      const parsed=importaWorkbook(wb);
-      // report PRIMA di salvare
-      const senzaLingua = sostegniSenzaLingua(parsed, S.lingue);
-      let html=`<div class="stat"><span>Docenti letti</span><b>${parsed.docenti.length}</b></div>
-        <div class="stat"><span>Griglia</span><b>${parsed.giorni.join(" ")} · ${parsed.ore.length} ore</b></div>
-        <div class="stat"><span>Sigle non riconosciute</span><b style="color:${parsed.ignote.length?'var(--red)':'var(--teal)'}">${parsed.ignote.length}</b></div>
-        <div class="stat"><span>Sostegni senza lingua (F/S)</span><b style="color:${senzaLingua.length?'var(--red)':'var(--teal)'}">${senzaLingua.length}</b></div>`;
-      if(parsed.ignote.length){
-        html += parsed.ignote.slice(0,10).map(x=>`<div class="flag"><b>${esc(x.nome)}</b> · ${x.g} ${x.h}ª ora: “${esc(x.val)}” — sigla non prevista, correggila nel file.</div>`).join("");
-        if(parsed.ignote.length>10) html+=`<p class="hint">…e altre ${parsed.ignote.length-10}.</p>`;
-      }
-      if(senzaLingua.length){
-        // raggruppo per giorno/ora per compattezza
-        const byOra={};
-        senzaLingua.forEach(x=>{ const k=x.g+" "+x.h+"ª"; (byOra[k]=byOra[k]||[]).push(esc(x.nome)+" ("+x.classe+")"); });
-        html += `<div class="flag"><b>Sostegni all'ora di 2ª lingua senza suffisso F/S</b> — a queste ore il sostegno va marcato francese (es. 2BF) o spagnolo (es. 2BS), così l'app sa in quale gruppo sta:</div>`;
-        html += Object.entries(byOra).slice(0,8).map(([k,v])=>`<div class="flag" style="background:var(--tint-warm2); border-color:var(--bd-warm); color:var(--tx-amber-dark)"><b>${k}</b>: ${v.join(", ")}</div>`).join("");
-        const nOre=Object.keys(byOra).length;
-        if(nOre>8) html+=`<p class="hint">…e altre ${nOre-8} ore.</p>`;
-      }
-      if(!parsed.ignote.length && !senzaLingua.length){
-        html += `<p class="hint" style="color:var(--teal)">Tutto riconosciuto. Orario pronto.</p>`;
-      } else {
-        html += `<p class="hint">Puoi salvare lo stesso: le sostituzioni funzioneranno, ma sui gruppi di lingua l'app non saprà distinguere francese da spagnolo finché non correggi le celle.</p>`;
-      }
-      html += `<button class="btn" style="margin-top:12px" id="confirm">Salva questo orario</button>`;
-      el("report").innerHTML=html;
-      el("confirm").addEventListener("click", ()=>{ const ex=docentiExtra().filter(e=>!parsed.docenti.some(d=>d.nome===e.nome)); if(ex.length) parsed.docentiExtra=ex; S.orario=parsed; save(); S.tab="orario"; S.day=parsed.giorni[0]; S.selDoc=""; S.selClasse=""; render(); });
-    }catch(err){
-      el("report").innerHTML=`<div class="flag" style="white-space:pre-wrap; line-height:1.5">Non riesco a leggere il file: ${esc(err.message)}</div>`;
-    }
-  };
-  rd.readAsArrayBuffer(f);
 }
 
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
