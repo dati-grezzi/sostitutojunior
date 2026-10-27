@@ -2,6 +2,9 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026j — n. 10
+- **Compresenza = potenziamento**: nell'importazione, in ogni cella dell'orario delle classi il primo nome resta il docente della classe e gli altri (la compresenza) diventano ore di potenziamento assegnate a quella classe. Prima erano potenziamento tutte le ore di ogni docente. La spunta «non è potenziamento» esclude il docente da questa regola. Mostrato il totale delle ore di potenziamento e, per ogni docente, quante sono in compresenza.
+
 ### 26.10.2026i — n. 9
 - **Potenziamento di default**: nell'importazione ogni docente dell'orario delle classi è potenziamento. Il menu dei ruoli è sostituito da una spunta «non è potenziamento» (per chi resta curricolare nella sua classe). Accanto a ogni nome: ore, classi e ore in cui è da solo/a in classe, per decidere.
 - **Importazione dell'orario del sostegno** (riquadro 2): si caricano uno o due PDF (SMA e/o S. Marone); il plesso si riconosce dall'intestazione e vale il PDF del gruppo scelto. I docenti del PDF del sostegno diventano «Sostegno» e restano nelle loro classi; chi compare in entrambi i PDF unisce le ore (quelle dell'orario delle classi seguono la regola del potenziamento).

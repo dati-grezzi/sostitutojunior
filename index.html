@@ -817,9 +817,10 @@ function pdfVariantiNome(conteggi){
 /* costruisce l'orario nel formato dell'app.
    opz = {gruppo:"SM"|"SMA", senzaSigla:bool, fusioni:{variante:canonico},
           ruoli:{nome:"Curricolare"} (chi NON è potenziamento), sostegno: lettura del PDF del sostegno | null}
-   Regola: ogni docente dell'orario delle classi è potenziamento (le sue ore diventano «a disposizione»
-   sulla classe dove il PDF lo colloca), salvo chi è segnato Curricolare. I docenti del PDF del
-   sostegno sono Sostegno e restano nelle loro classi. */
+   Regola: in ogni cella dell'orario delle classi il PRIMO nome è il docente della classe; gli altri
+   (la compresenza) sono potenziamento: la loro ora diventa «a disposizione» sulla classe dove il PDF
+   li colloca. Chi è segnato Curricolare non è mai potenziamento. I docenti del PDF del sostegno
+   sono Sostegno e restano nelle loro classi. */
 function costruisciOrarioPrimaria(lettura, opz){
   const gruppo=(opz.gruppo||"").toUpperCase(), fus=opz.fusioni||{}, ruoli=opz.ruoli||{};
   const scelti = lettura.blocchi.filter(b=> b.suff===gruppo || (b.suff==="" && opz.senzaSigla));
@@ -853,7 +854,7 @@ function costruisciOrarioPrimaria(lettura, opz){
   const aggiungi = (b, daSost)=>{
     for(const k in b.celle){
       if(!giorniSet.has(k.split("|")[0])) continue;
-      b.celle[k].forEach(t=>{
+      b.celle[k].forEach((t,pos)=>{
         const n = nome(t,b.classe); if(t.nome==null) nNom++;
         if(daSost) nomiSost.add(n);
         const d = doc[n] || (doc[n]={nome:n, cells:{}});
@@ -865,27 +866,29 @@ function costruisciOrarioPrimaria(lettura, opz){
           return;
         }
         Object.defineProperty(cella,"_s",{value:!!daSost, enumerable:false});
+        Object.defineProperty(cella,"_p",{value:pos, enumerable:false});   /* posizione nella cella: 0 = primo nome */
         d.cells[k]=cella;
       });
     }
   };
   blocchi.forEach(b=>aggiungi(b,false));
   blocchiS.forEach(b=>aggiungi(b,true));
-  const potAssegn={}; let nPot=0;
+  const potAssegn={}; let nPot=0, nOrePot=0;
   const docenti = Object.values(doc).sort((a,b)=>a.nome.localeCompare(b.nome)).map(d=>{
     const cells={}, segn=/^Da nominare/.test(d.nome), sosteg=nomiSost.has(d.nome);
     const pot = !segn && ruoli[d.nome]!=="Curricolare";
     giorni.forEach(g=>ore.forEach(h=>{
       const k=g+"|"+h, c=d.cells[k];
-      if(c && pot && !c._s){ cells[k]={t:"DISP", det:"P·"+c.det}; potAssegn[d.nome+"|"+k]=c.det; }
+      if(c && pot && !c._s && c._p>=1){ cells[k]={t:"DISP", det:"P·"+c.det}; potAssegn[d.nome+"|"+k]=c.det; nOrePot++; }
       else cells[k]=c||{t:"VUOTA"};
     }));
-    if(pot && Object.values(cells).some(c=>c.t==="DISP")) nPot++;
-    return {nome:d.nome, materia: sosteg ? "Sostegno" : segn ? "Curricolare" : pot ? "Potenziamento" : "Curricolare", cells};
+    const haPot = Object.values(cells).some(c=>c.t==="DISP");
+    if(haPot) nPot++;
+    return {nome:d.nome, materia: sosteg ? "Sostegno" : haPot ? "Potenziamento" : "Curricolare", cells};
   });
   return { giorni, ore, docenti, ignote:[], quando:new Date().toISOString(), fasce,
            gruppo, potAssegn, _rep:{classi:blocchi.length, classiSost:blocchiS.length, nSostegno:nomiSost.size,
-           nPot, conflitti, avvisi, nNote, nNom} };
+           nPot, nOrePot, conflitti, avvisi, nNote, nNom} };
 }
 
 /* statistiche per aiutare a decidere chi NON è potenziamento: quante ore, in quante classi,
@@ -895,13 +898,13 @@ function pdfStatisticheDocenti(lettura, opz){
   const scelti = lettura.blocchi.filter(b=> b.suff===gruppo || (b.suff==="" && opz.senzaSigla));
   const per={}, mio={};
   scelti.forEach(b=>{ for(const k in b.celle){
-    const l=b.celle[k]; l.forEach(t=>{
+    const l=b.celle[k]; l.forEach((t,pos)=>{
       if(t.nome==null) return; const n=fus[t.nome]||t.nome;
-      const x=mio[n]||(mio[n]={ore:0,sola:0,classi:new Set()});
-      x.ore++; x.classi.add(b.classe); if(l.length===1) x.sola++;
+      const x=mio[n]||(mio[n]={ore:0,sola:0,comp:0,classi:new Set()});
+      x.ore++; x.classi.add(b.classe); if(l.length===1) x.sola++; if(pos>=1) x.comp++;
     });
   } });
-  const st={}; for(const n in mio) st[n]={ore:mio[n].ore, sola:mio[n].sola, classi:mio[n].classi.size};
+  const st={}; for(const n in mio) st[n]={ore:mio[n].ore, sola:mio[n].sola, comp:mio[n].comp, classi:mio[n].classi.size};
   return st;
 }
 /*PDF-FINE*/
@@ -3098,8 +3101,8 @@ function azzeraPno(){
 
 /* ---- BACKUP e RIPRISTINO ---- */
 const BACKUP_VER = 1;
-const VERSIONE = "26.10.2026i";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
-const NUMERO_VERSIONE = 9;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
+const VERSIONE = "26.10.2026j";   /* aggiornare a ogni consegna: si legge in alto, sotto il titolo */
+const NUMERO_VERSIONE = 10;         /* contatore progressivo delle consegne di SOStituto junior (+1 a ogni consegna) */
 function datiBackup(){
   return {
     app: "SOStituto", versione: BACKUP_VER,
@@ -5188,6 +5191,7 @@ function impMostra(){
   }
   h+=`<div class="stat"><span>Classi lette</span><b>${rep.classi}</b></div>
     <div class="stat"><span>Docenti</span><b>${parsed.docenti.length}</b></div>
+    <div class="stat"><span>Ore di potenziamento</span><b>${rep.nOrePot}</b></div>
     <div class="stat"><span>Sostegno</span><b>${sost?rep.classiSost+" classi · "+rep.nSostegno+" docenti":"non caricato"}</b></div>
     <div class="stat"><span>Griglia</span><b>${parsed.giorni.join(" ")} · ${parsed.ore.length} ore</b></div>
     <div class="stat"><span>«Da nominare»</span><b>${rep.nNom} ore</b></div>
@@ -5206,10 +5210,10 @@ function impMostra(){
   const sostNomi=parsed.docenti.filter(isSost);
   const altri=parsed.docenti.filter(d=>!/^Da nominare/.test(d.nome) && (d.nome in stat));
   h+=`<h2 class="sec" style="margin-top:22px">Potenziamento</h2>
-    <p class="hint" style="margin-top:0">Di default <b>tutti</b> i docenti dell'orario delle classi sono potenziamento: le loro ore diventano «a disposizione» sulla classe dove il PDF li colloca (le cambi poi in Altro → Potenziamento). Spunta <b>solo chi NON è potenziamento</b>: resta nella sua classe come docente curricolare.</p>`;
+    <p class="hint" style="margin-top:0">Di default, in ogni ora il <b>primo nome</b> della cella è il docente della classe e il <b>secondo (la compresenza)</b> è potenziamento: la sua ora diventa «a disposizione» sulla classe indicata (poi la cambi in Altro → Potenziamento). Spunta <b>solo chi NON è potenziamento</b>: le sue ore in compresenza restano nella classe.</p>`;
   h+=altri.map(d=>{
     const s=stat[d.nome], non=I.ruoli[d.nome]==="Curricolare", ancheS=isSost(d);
-    return `<label class="stat" style="align-items:center; gap:8px; cursor:pointer"><span style="flex:1; min-width:0">${esc(d.nome)}<br><span class="hint">${s.ore} ore · ${s.classi} ${s.classi===1?"classe":"classi"}${s.sola?" · "+s.sola+" da solo/a":""}${ancheS?" · anche sostegno":""}</span></span>
+    return `<label class="stat" style="align-items:center; gap:8px; cursor:pointer"><span style="flex:1; min-width:0">${esc(d.nome)}<br><span class="hint">${s.ore} ore · ${s.classi} ${s.classi===1?"classe":"classi"}${s.comp?" · "+s.comp+" in compresenza":""}${ancheS?" · anche sostegno":""}</span></span>
       <span style="display:flex; align-items:center; gap:6px; font-size:13px; white-space:nowrap"><input type="checkbox" data-n="${esc(d.nome)}" ${non?'checked':''} onchange="impNonPot(this.dataset.n, this.checked)"> non è potenziamento</span></label>`;
   }).join("");
   if(sostNomi.length){
