@@ -2,6 +2,12 @@
 
 Formato versione: `GG.MM.AAAA` + lettera + numero progressivo delle consegne (`n. 1`…).
 
+### 26.10.2026i — n. 9
+- **Potenziamento di default**: nell'importazione ogni docente dell'orario delle classi è potenziamento. Il menu dei ruoli è sostituito da una spunta «non è potenziamento» (per chi resta curricolare nella sua classe). Accanto a ogni nome: ore, classi e ore in cui è da solo/a in classe, per decidere.
+- **Importazione dell'orario del sostegno** (riquadro 2): si caricano uno o due PDF (SMA e/o S. Marone); il plesso si riconosce dall'intestazione e vale il PDF del gruppo scelto. I docenti del PDF del sostegno diventano «Sostegno» e restano nelle loro classi; chi compare in entrambi i PDF unisce le ore (quelle dell'orario delle classi seguono la regola del potenziamento).
+- Lettore PDF: etichette orarie con punto o spazio («10.05-11.05», «13:05- 14:05»), note attaccate al nome («Rossi Anna entra 11.15»), «entra/esce alle hh.mm», **«Attività organizzative»** (con eventuale intervallo) come nota della cella, nomi con solo il cognome riuniti al nome completo (spunta per annullare).
+- Avvisi: classi del sostegno assenti nell'orario delle classi o con la prima ora diversa.
+
 ### 26.10.2026h — n. 8
 - **Uscita con sola delegazione** (come in SOStituto 26.10.2026a): spunta nel modulo delle uscite. La classe non è fuori sede, l'accompagnatore si sostituisce anche nelle ore in quella classe e i docenti della classe non vengono spostati altrove.
 
